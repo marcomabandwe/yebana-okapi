@@ -11,11 +11,11 @@ class Database {
     public $conn;
 
     public function __construct() {
-        $this->host = getenv('DB_HOST') ?: 'mysql-9260506-mabandwemarco-edad.d.aivencloud.com';
-        $this->port = getenv('DB_PORT') ?: '22154'; // Port fourni par Aiven
-        $this->db_name = getenv('DB_NAME') ?: 'idcongo';
-        $this->username = getenv('DB_USER') ?: 'avnadmin';
-        $this->password = getenv('DB_PASS') ?: '';
+        $this->host = getenv('OKAPI_DB_HOST') ?: 'mysql-9260506-mabandwemarco-edad.d.aivencloud.com';
+        $this->port = getenv('OKAPI_DB_PORT') ?: '22154'; // Port fourni par Aiven
+        $this->db_name = getenv('OKAPI_DB_NAME') ?: 'idcongo';
+        $this->username = getenv('OKAPI_DB_USER') ?: 'avnadmin';
+        $this->password = getenv('OKAPI_DB_PASS') ?: '';
     }
 
     public function getConnection() {
