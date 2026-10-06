@@ -15,7 +15,7 @@ class Database {
         $this->port = getenv('DB_PORT') ?: '22154'; // Port fourni par Aiven
         $this->db_name = getenv('DB_NAME') ?: 'idcongo';
         $this->username = getenv('DB_USER') ?: 'avnadmin';
-        $this->password = getenv('DB_PASS') ?: ';
+        $this->password = getenv('DB_PASS') ?: '';
     }
 
     public function getConnection() {
