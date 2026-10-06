@@ -1,8 +1,7 @@
 <?php
-// config/database.php
+// Config/database.php
 
 class Database {
-    // Récupération des variables d'environnement (ou valeurs par défaut)
     private $host;
     private $port;
     private $db_name;
@@ -12,7 +11,7 @@ class Database {
 
     public function __construct() {
         $this->host = getenv('OKAPI_DB_HOST') ?: 'mysql-9260506-mabandwemarco-edad.d.aivencloud.com';
-        $this->port = getenv('OKAPI_DB_PORT') ?: '22154'; // Port fourni par Aiven
+        $this->port = getenv('OKAPI_DB_PORT') ?: '22154';
         $this->db_name = getenv('OKAPI_DB_NAME') ?: 'idcongo';
         $this->username = getenv('OKAPI_DB_USER') ?: 'avnadmin';
         $this->password = getenv('OKAPI_DB_PASS') ?: '';
@@ -22,11 +21,11 @@ class Database {
         $this->conn = null;
 
         try {
-            // Options pour MySQL Aiven (exige souvent SSL)
             $options = [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::MYSQL_ATTR_SSL_CA => true, // Active la vérification SSL Aiven
+                // Connexion SSL sécurisée pour Aiven sans vérification stricte du fichier CA local
+                PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
             ];
 
             $dsn = "mysql:host=" . $this->host . ";port=" . $this->port . ";dbname=" . $this->db_name . ";charset=utf8mb4";
