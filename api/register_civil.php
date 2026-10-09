@@ -1,7 +1,7 @@
 <?php
 // api/register_civil.php
 
-// 1. En-têtes CORS universels pour mobile et web
+// 1. En-têtes CORS universels pour Mobile & Web
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
@@ -19,13 +19,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
-// 3. Connexion à la BDD
+// 3. Connexion BDD via la classe Database
 require_once __DIR__ . '/../Config/database.php';
 
 $database = new Database();
 $pdo = $database->getConnection();
 
-// Helper conversion date en YYYY-MM-DD
+// Conversion de date vers le format MySQL (YYYY-MM-DD)
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
@@ -35,7 +35,7 @@ function convertDateToMySQL($dateStr) {
     return date('Y-m-d', strtotime($dateStr));
 }
 
-// Helper UUID v4
+// Génération d'un UUID v4
 function generateUUID() {
     return sprintf(
         '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
@@ -47,7 +47,7 @@ function generateUUID() {
     );
 }
 
-// Récupération des données reçues
+// Récupération du JSON envoyé par React Native
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -71,7 +71,7 @@ if (empty($nom) || empty($prenom) || empty($sexe) || empty($adresse)) {
     exit();
 }
 
-// Map état civil
+// Mapping de l'état civil pour le type ENUM ('CELIBATAIRE','MARIE','DIVORCE','VEUF')
 $etatCivilInput = strtolower(trim($data['etatCivil'] ?? 'celibataire'));
 $etatCivilMap = [
     'celibataire' => 'CELIBATAIRE',
@@ -91,24 +91,12 @@ $photoUrl = $data['photo'] ?? null;
 try {
     $pdo->beginTransaction();
 
-    // 1. Détection du nom de la colonne du mot de passe dans 'users'
-    $passwordCol = 'password';
-    $colsStmt = $pdo->query("SHOW COLUMNS FROM users");
-    $columns = $colsStmt->fetchAll(PDO::FETCH_COLUMN);
-    
-    if (in_array('password_hash', $columns)) {
-        $passwordCol = 'password_hash';
-    } elseif (in_array('pass', $columns)) {
-        $passwordCol = 'pass';
-    } elseif (in_array('mot_de_passe', $columns)) {
-        $passwordCol = 'mot_de_passe';
-    }
-
-    // 2. Gestion de l'existence du compte 'users'
+    // 1. Si aucun user_id n'est passé par l'app, création/récupération dans la table 'users'
     if (empty($userId)) {
         $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
+        $username = strtolower($prenom . rand(100, 999));
 
-        // Vérifier si un utilisateur a déjà cet email
+        // Vérification de l'existence de l'utilisateur par email
         $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $checkStmt->execute([':email' => $userEmail]);
         $existingUser = $checkStmt->fetch();
@@ -117,21 +105,26 @@ try {
             $userId = $existingUser['id'];
         } else {
             $userId = generateUUID();
-            $defaultPassword = password_hash('123456', PASSWORD_BCRYPT);
+            $defaultPasswordHash = password_hash('123456', PASSWORD_BCRYPT);
 
-            // Insertion dynamique selon la colonne trouvée
-            $sqlUser = "INSERT INTO users (id, email, {$passwordCol}, role, created_at) 
-                        VALUES (:id, :email, :password, 'CIVIL', NOW())";
+            // Insertion correspondant aux colonnes de la table users
+            $sqlUser = "INSERT INTO users (
+                            id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at
+                        ) VALUES (
+                            :id, :email, :username, :password_hash, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW()
+                        )";
+            
             $stmtUser = $pdo->prepare($sqlUser);
             $stmtUser->execute([
-                ':id'       => $userId,
-                ':email'    => $userEmail,
-                ':password' => $defaultPassword,
+                ':id'            => $userId,
+                ':email'         => $userEmail,
+                ':username'      => $username,
+                ':password_hash' => $defaultPasswordHash,
             ]);
         }
     }
 
-    // 3. Insertion dans 'profiles_civil'
+    // 2. Insertion dans 'profiles_civil'
     $sqlCivil = "INSERT INTO profiles_civil (
                     user_id, nom, postnom, prenom, sexe, 
                     date_naissance, lieu_naissance, etat_civil, 
@@ -158,7 +151,7 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
-    // 4. Insertion dans 'family_members'
+    // 3. Insertion dans 'family_members'
     $sqlFamily = "INSERT INTO family_members (
                     id, owner_user_id, nom, prenom, 
                     lien_parental, sexe, date_naissance, photo_url, created_at
@@ -168,7 +161,7 @@ try {
                 )";
     $stmtFamily = $pdo->prepare($sqlFamily);
 
-    // Conjoint
+    // Conjoint(e)
     if ($etatCivil === 'MARIE' && !empty($data['conjoint']['conjointNom'])) {
         $stmtFamily->execute([
             ':id'             => generateUUID(),
