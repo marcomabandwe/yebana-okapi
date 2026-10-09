@@ -1,11 +1,13 @@
 <?php
 // api/register_civil.php
 
+// 1. En-têtes CORS universels pour mobile et web
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
+// 2. Traitement Preflight OPTIONS
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -17,24 +19,20 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
-// Inclusion de la configuration BDD
+// 3. Inclusion du fichier de configuration DB et instanciation de la connexion
 require_once __DIR__ . '/../Config/database.php';
 
-// --- CORRECTION DU NOM DE LA VARIABLE PDO ---
-// On s'assure de récupérer l'objet PDO si nommé différemment dans database.php
-if (!isset($pdo)) {
-    if (isset($conn)) {
-        $pdo = $conn;
-    } elseif (isset($db)) {
-        $pdo = $db;
-    } else {
-        http_response_code(500);
-        echo json_encode([
-            "status" => "error",
-            "message" => "Erreur de connexion : La variable PDO n'a pas été trouvée dans Config/database.php"
-        ]);
-        exit();
+$database = new Database();
+$pdo = $database->getConnection();
+
+// Fonction de conversion de date en format MySQL (YYYY-MM-DD)
+function convertDateToMySQL($dateStr) {
+    if (empty($dateStr)) return null;
+    if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
+        $parts = explode('/', $dateStr);
+        return "{$parts[2]}-{$parts[1]}-{$parts[0]}";
     }
+    return date('Y-m-d', strtotime($dateStr));
 }
 
 // Génération d'un UUID v4 pour user_id / family_member id
