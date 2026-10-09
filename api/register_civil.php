@@ -1,13 +1,11 @@
 <?php
 // api/register_civil.php
 
-// 1. En-têtes CORS universels pour Mobile & Web
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
-// 2. Traitement Preflight OPTIONS
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -19,13 +17,12 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
-// 3. Connexion BDD via la classe Database
 require_once __DIR__ . '/../Config/database.php';
 
 $database = new Database();
 $pdo = $database->getConnection();
 
-// Conversion de date vers le format MySQL (YYYY-MM-DD)
+// Conversion de date vers MySQL (YYYY-MM-DD)
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
@@ -35,7 +32,7 @@ function convertDateToMySQL($dateStr) {
     return date('Y-m-d', strtotime($dateStr));
 }
 
-// Génération d'un UUID v4
+// Génération UUID v4
 function generateUUID() {
     return sprintf(
         '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
@@ -47,7 +44,6 @@ function generateUUID() {
     );
 }
 
-// Récupération du JSON envoyé par React Native
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -71,7 +67,7 @@ if (empty($nom) || empty($prenom) || empty($sexe) || empty($adresse)) {
     exit();
 }
 
-// Mapping de l'état civil pour le type ENUM ('CELIBATAIRE','MARIE','DIVORCE','VEUF')
+// Map état civil pour l'ENUM ('CELIBATAIRE','MARIE','DIVORCE','VEUF')
 $etatCivilInput = strtolower(trim($data['etatCivil'] ?? 'celibataire'));
 $etatCivilMap = [
     'celibataire' => 'CELIBATAIRE',
@@ -91,12 +87,11 @@ $photoUrl = $data['photo'] ?? null;
 try {
     $pdo->beginTransaction();
 
-    // 1. Si aucun user_id n'est passé par l'app, création/récupération dans la table 'users'
+    // 1. Gestion de l'existence de l'utilisateur dans 'users'
     if (empty($userId)) {
         $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
         $username = strtolower($prenom . rand(100, 999));
 
-        // Vérification de l'existence de l'utilisateur par email
         $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $checkStmt->execute([':email' => $userEmail]);
         $existingUser = $checkStmt->fetch();
@@ -107,7 +102,6 @@ try {
             $userId = generateUUID();
             $defaultPasswordHash = password_hash('123456', PASSWORD_BCRYPT);
 
-            // Insertion correspondant aux colonnes de la table users
             $sqlUser = "INSERT INTO users (
                             id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at
                         ) VALUES (
@@ -124,7 +118,7 @@ try {
         }
     }
 
-    // 2. Insertion dans 'profiles_civil'
+    // 2. Insertion du profil principal dans 'profiles_civil'
     $sqlCivil = "INSERT INTO profiles_civil (
                     user_id, nom, postnom, prenom, sexe, 
                     date_naissance, lieu_naissance, etat_civil, 
@@ -151,7 +145,7 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
-    // 3. Insertion dans 'family_members'
+    // 3. Préparation pour l'insertion des membres de la famille
     $sqlFamily = "INSERT INTO family_members (
                     id, owner_user_id, nom, prenom, 
                     lien_parental, sexe, date_naissance, photo_url, created_at
@@ -178,14 +172,22 @@ try {
     // Enfants
     if (!empty($data['enfants']) && is_array($data['enfants'])) {
         foreach ($data['enfants'] as $enfant) {
-            if (!empty($enfant['nomComplet'])) {
+            $enfantNom = trim($enfant['nomComplet'] ?? '');
+            
+            // On vérifie que le nom complet n'est pas vide
+            if (!empty($enfantNom)) {
+                $sexeEnfant = strtoupper(trim($enfant['sexe'] ?? 'M'));
+                if (!in_array($sexeEnfant, ['M', 'F'])) {
+                    $sexeEnfant = 'M';
+                }
+
                 $stmtFamily->execute([
                     ':id'             => generateUUID(),
                     ':owner_user_id'  => $userId,
-                    ':nom'            => trim($enfant['nomComplet']),
+                    ':nom'            => $enfantNom,
                     ':prenom'         => '',
                     ':lien_parental'  => 'ENFANT',
-                    ':sexe'           => strtoupper($enfant['sexe'] ?? 'M'),
+                    ':sexe'           => $sexeEnfant,
                     ':date_naissance' => convertDateToMySQL($enfant['dateNaissance'] ?? null),
                     ':photo_url'      => $enfant['photo'] ?? null,
                 ]);
