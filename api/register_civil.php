@@ -19,13 +19,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
-// 3. Inclusion du fichier de configuration DB et instanciation de la connexion
+// 3. Connexion à la BDD
 require_once __DIR__ . '/../Config/database.php';
 
 $database = new Database();
 $pdo = $database->getConnection();
 
-// Fonction de conversion de date en format MySQL (YYYY-MM-DD)
+// Conversion de date en format MySQL (YYYY-MM-DD)
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
@@ -35,7 +35,7 @@ function convertDateToMySQL($dateStr) {
     return date('Y-m-d', strtotime($dateStr));
 }
 
-// Génération d'un UUID v4 pour user_id / family_member id
+// Génération UUID v4
 function generateUUID() {
     return sprintf(
         '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
@@ -47,7 +47,7 @@ function generateUUID() {
     );
 }
 
-// Récupération des données reçues
+// Récupération des données du formulaire
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -63,6 +63,7 @@ $postnom = trim($data['postnom'] ?? '');
 $prenom = trim($data['prenom'] ?? '');
 $sexe = strtoupper(trim($data['sexe'] ?? 'M'));
 $adresse = trim($data['emplacement'] ?? '');
+$email = trim($data['email'] ?? '');
 
 if (empty($nom) || empty($prenom) || empty($sexe) || empty($adresse)) {
     http_response_code(422);
@@ -70,7 +71,7 @@ if (empty($nom) || empty($prenom) || empty($sexe) || empty($adresse)) {
     exit();
 }
 
-// Harmonisation de l'état civil pour ENUM ('CELIBATAIRE','MARIE','DIVORCE','VEUF')
+// Mapping de l'état civil pour le champ ENUM
 $etatCivilInput = strtolower(trim($data['etatCivil'] ?? 'celibataire'));
 $etatCivilMap = [
     'celibataire' => 'CELIBATAIRE',
@@ -80,7 +81,7 @@ $etatCivilMap = [
 ];
 $etatCivil = $etatCivilMap[$etatCivilInput] ?? 'CELIBATAIRE';
 
-$userId = $data['user_id'] ?? generateUUID();
+$userId = $data['user_id'] ?? null;
 $dateNaissance = convertDateToMySQL($data['dateNaissance'] ?? null);
 $lieuNaissance = trim($data['lieuNaissance'] ?? '');
 $telephone = trim($data['telephone'] ?? '');
@@ -90,7 +91,23 @@ $photoUrl = $data['photo'] ?? null;
 try {
     $pdo->beginTransaction();
 
-    // 1. Insertion dans 'profiles_civil'
+    // 1. Si aucun user_id n'est fourni, on crée une entrée dans la table 'users'
+    if (empty($userId)) {
+        $userId = generateUUID();
+        $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
+        $defaultPassword = password_hash('123456', PASSWORD_BCRYPT); // Mot de passe par défaut
+
+        $sqlUser = "INSERT INTO users (id, email, password, role, created_at) 
+                    VALUES (:id, :email, :password, 'CIVIL', NOW())";
+        $stmtUser = $pdo->prepare($sqlUser);
+        $stmtUser->execute([
+            ':id'       => $userId,
+            ':email'    => $userEmail,
+            ':password' => $defaultPassword,
+        ]);
+    }
+
+    // 2. Insertion dans 'profiles_civil'
     $sqlCivil = "INSERT INTO profiles_civil (
                     user_id, nom, postnom, prenom, sexe, 
                     date_naissance, lieu_naissance, etat_civil, 
@@ -117,7 +134,7 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
-    // Requête préparée pour 'family_members'
+    // 3. Préparation pour l'insertion des membres de la famille
     $sqlFamily = "INSERT INTO family_members (
                     id, owner_user_id, nom, prenom, 
                     lien_parental, sexe, date_naissance, photo_url, created_at
@@ -127,7 +144,7 @@ try {
                 )";
     $stmtFamily = $pdo->prepare($sqlFamily);
 
-    // 2. Insertion du Conjoint si marié(e)
+    // Conjoint
     if ($etatCivil === 'MARIE' && !empty($data['conjoint']['conjointNom'])) {
         $stmtFamily->execute([
             ':id'             => generateUUID(),
@@ -141,7 +158,7 @@ try {
         ]);
     }
 
-    // 3. Insertion des Enfants
+    // Enfants
     if (!empty($data['enfants']) && is_array($data['enfants'])) {
         foreach ($data['enfants'] as $enfant) {
             if (!empty($enfant['nomComplet'])) {
