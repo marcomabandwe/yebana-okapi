@@ -25,7 +25,7 @@ require_once __DIR__ . '/../Config/database.php';
 $database = new Database();
 $pdo = $database->getConnection();
 
-// Conversion de date en format MySQL (YYYY-MM-DD)
+// Helper conversion date en YYYY-MM-DD
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
@@ -35,7 +35,7 @@ function convertDateToMySQL($dateStr) {
     return date('Y-m-d', strtotime($dateStr));
 }
 
-// Génération UUID v4
+// Helper UUID v4
 function generateUUID() {
     return sprintf(
         '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
@@ -47,7 +47,7 @@ function generateUUID() {
     );
 }
 
-// Récupération des données du formulaire
+// Récupération des données reçues
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -71,7 +71,7 @@ if (empty($nom) || empty($prenom) || empty($sexe) || empty($adresse)) {
     exit();
 }
 
-// Mapping de l'état civil pour le champ ENUM
+// Map état civil
 $etatCivilInput = strtolower(trim($data['etatCivil'] ?? 'celibataire'));
 $etatCivilMap = [
     'celibataire' => 'CELIBATAIRE',
@@ -91,23 +91,47 @@ $photoUrl = $data['photo'] ?? null;
 try {
     $pdo->beginTransaction();
 
-    // 1. Si aucun user_id n'est fourni, on crée une entrée dans la table 'users'
-    if (empty($userId)) {
-        $userId = generateUUID();
-        $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
-        $defaultPassword = password_hash('123456', PASSWORD_BCRYPT); // Mot de passe par défaut
-
-        $sqlUser = "INSERT INTO users (id, email, password, role, created_at) 
-                    VALUES (:id, :email, :password, 'CIVIL', NOW())";
-        $stmtUser = $pdo->prepare($sqlUser);
-        $stmtUser->execute([
-            ':id'       => $userId,
-            ':email'    => $userEmail,
-            ':password' => $defaultPassword,
-        ]);
+    // 1. Détection du nom de la colonne du mot de passe dans 'users'
+    $passwordCol = 'password';
+    $colsStmt = $pdo->query("SHOW COLUMNS FROM users");
+    $columns = $colsStmt->fetchAll(PDO::FETCH_COLUMN);
+    
+    if (in_array('password_hash', $columns)) {
+        $passwordCol = 'password_hash';
+    } elseif (in_array('pass', $columns)) {
+        $passwordCol = 'pass';
+    } elseif (in_array('mot_de_passe', $columns)) {
+        $passwordCol = 'mot_de_passe';
     }
 
-    // 2. Insertion dans 'profiles_civil'
+    // 2. Gestion de l'existence du compte 'users'
+    if (empty($userId)) {
+        $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
+
+        // Vérifier si un utilisateur a déjà cet email
+        $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
+        $checkStmt->execute([':email' => $userEmail]);
+        $existingUser = $checkStmt->fetch();
+
+        if ($existingUser) {
+            $userId = $existingUser['id'];
+        } else {
+            $userId = generateUUID();
+            $defaultPassword = password_hash('123456', PASSWORD_BCRYPT);
+
+            // Insertion dynamique selon la colonne trouvée
+            $sqlUser = "INSERT INTO users (id, email, {$passwordCol}, role, created_at) 
+                        VALUES (:id, :email, :password, 'CIVIL', NOW())";
+            $stmtUser = $pdo->prepare($sqlUser);
+            $stmtUser->execute([
+                ':id'       => $userId,
+                ':email'    => $userEmail,
+                ':password' => $defaultPassword,
+            ]);
+        }
+    }
+
+    // 3. Insertion dans 'profiles_civil'
     $sqlCivil = "INSERT INTO profiles_civil (
                     user_id, nom, postnom, prenom, sexe, 
                     date_naissance, lieu_naissance, etat_civil, 
@@ -134,7 +158,7 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
-    // 3. Préparation pour l'insertion des membres de la famille
+    // 4. Insertion dans 'family_members'
     $sqlFamily = "INSERT INTO family_members (
                     id, owner_user_id, nom, prenom, 
                     lien_parental, sexe, date_naissance, photo_url, created_at
