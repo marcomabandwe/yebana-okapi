@@ -49,11 +49,11 @@ $provider = strtoupper(trim($data['provider'] ?? 'MPESA'));
 $montant = 5.00;
 $devise = 'USD';
 
-if (empty($userId) || empty($email) || empty($phone)) {
+if (empty($email) || empty($phone)) {
     http_response_code(422);
     echo json_encode([
         "status" => "error",
-        "message" => "Veuillez renseigner un e-mail valide et un numéro Mobile Money."
+        "message" => "Veuillez renseigner votre e-mail et votre numéro Mobile Money."
     ]);
     exit();
 }
@@ -61,19 +61,38 @@ if (empty($userId) || empty($email) || empty($phone)) {
 try {
     $pdo->beginTransaction();
 
-    // 1. Mettre à jour l'email de l'utilisateur dans 'users'
-    $sqlUpdateUser = "UPDATE users SET email = :email, updated_at = NOW() WHERE id = :id";
-    $stmtUser = $pdo->prepare($sqlUpdateUser);
-    $stmtUser->execute([
-        ':email' => $email,
-        ':id'    => $userId,
-    ]);
+    // Si aucun user_id n'est transmis, recherche par e-mail ou création temporaire
+    if (empty($userId)) {
+        $stmtUser = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
+        $stmtUser->execute([':email' => $email]);
+        $user = $stmtUser->fetch();
 
-    // 2. Générer une référence opérateur fictive ou réelle
+        if ($user) {
+            $userId = $user['id'];
+        } else {
+            $userId = generateUUID();
+            $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :pass, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW())");
+            $stmtNewUser->execute([
+                ':id' => $userId,
+                ':email' => $email,
+                ':username' => explode('@', $email)[0],
+                ':pass' => password_hash('123456', PASSWORD_BCRYPT)
+            ]);
+        }
+    } else {
+        // Mettre à jour l'e-mail dans 'users'
+        $sqlUpdateUser = "UPDATE users SET email = :email, updated_at = NOW() WHERE id = :id";
+        $stmtUser = $pdo->prepare($sqlUpdateUser);
+        $stmtUser->execute([
+            ':email' => $email,
+            ':id'    => $userId,
+        ]);
+    }
+
     $refOperateur = strtoupper($provider) . "-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
 
-    // 3. Insérer le paiement dans la table 'payments'
+    // Insertion dans 'payments'
     $sqlPayment = "INSERT INTO payments (
                         id, user_id, montant, devise, methode_paiement, 
                         reference_operateur, statut_paiement, created_at
@@ -96,7 +115,7 @@ try {
     http_response_code(201);
     echo json_encode([
         "status"              => "success",
-        "message"             => "Paiement effectué avec succès.",
+        "message"             => "Paiement validé avec succès.",
         "payment_id"          => $paymentId,
         "reference_operateur" => $refOperateur,
         "email"               => $email
