@@ -19,7 +19,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 require_once __DIR__ . '/../Config/database.php';
 
-// Importation de PHPMailer
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
@@ -41,17 +40,16 @@ function generateUUID() {
     );
 }
 
-// Fonction d'envoi du code de confirmation par Email
+// Fonction d'envoi de l'e-mail avec PHPMailer
 function sendConfirmationEmail($toEmail, $code) {
     $mail = new PHPMailer(true);
 
     try {
-        // Configuration SMTP (Remplacez par vos identifiants SMTP)
         $mail->isSMTP();
         $mail->Host       = getenv('SMTP_HOST') ?: 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = getenv('SMTP_USER') ?: 'votre.email@gmail.com';
-        $mail->Password   = getenv('SMTP_PASS') ?: 'votre_mot_de_passe_application';
+        $mail->Username   = getenv('SMTP_USER') ?: 'mabandwemarco@gmail.com';
+        $mail->Password   = getenv('SMTP_PASS') ?: 'votre_mot_de_passe_app';
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = getenv('SMTP_PORT') ?: 587;
         $mail->CharSet    = 'UTF-8';
@@ -60,20 +58,20 @@ function sendConfirmationEmail($toEmail, $code) {
         $mail->addAddress($toEmail);
 
         $mail->isHTML(true);
-        $mail->Subject = 'Code de confirmation d\'enregistrement - ID Congo';
+        $mail->Subject = 'Code de confirmation de votre paiement - ID Congo';
         $mail->Body    = "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 500px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
-                    <h2 style='color: #1E3A8A; text-align: center;'>Validation de votre inscription</h2>
+                    <h2 style='color: #1E3A8A; text-align: center;'>Validation de votre enregistrement</h2>
                     <p>Bonjour,</p>
-                    <p>Votre paiement de <strong>5.00 $ USD</strong> a été traité avec succès.</p>
+                    <p>Votre demande de paiement de <strong>5.00 $ USD</strong> a été initiée avec succès.</p>
                     <p>Voici votre code de confirmation à saisir dans l'application :</p>
                     <div style='text-align: center; margin: 25px 0;'>
                         <span style='font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #16A34A; background: #ECFDF5; padding: 10px 20px; border-radius: 8px; border: 1px dashed #16A34A;'>
                             {$code}
                         </span>
                     </div>
-                    <p style='color: #64748B; font-size: 13px;'>Ce code est valide pendant 15 minutes. Ne le partagez avec personne.</p>
+                    <p style='color: #64748B; font-size: 13px;'>Conservez ce code pour valider la dernière étape dans l'application ID Congo.</p>
                 </div>
             </div>
         ";
@@ -86,10 +84,14 @@ function sendConfirmationEmail($toEmail, $code) {
     }
 }
 
-// Fonction pour déclencher la demande de paiement FlexPay Mobile Money
-function triggerFlexPayPayment($phone, $amount, $provider, $reference) {
-    $flexpayToken = getenv('FLEXPAY_TOKEN') ?: 'VOTRE_FLEXPAY_TOKEN_MARCHAND';
-    $flexpayMerchant = getenv('FLEXPAY_MERCHANT') ?: 'VOTRE_MERCHANT_CODE';
+// Fonction pour déclencher le paiement MaxiCash API
+function triggerMaxiCashPayment($phone, $amount, $provider, $reference) {
+    $merchantId = getenv('MAXICASH_MERCHANT_ID') ?: 'VOTRE_MERCHANT_ID';
+    $merchantPassword = getenv('MAXICASH_PASSWORD') ?: 'VOTRE_MERCHANT_PASSWORD';
+    
+    // Environnement Sandbox (Test) ou Production (Live)
+    $isSandbox = getenv('MAXICASH_SANDBOX') !== 'false';
+    $baseUrl = $isSandbox ? "https://api-testbed.maxicashapp.com" : "https://api.maxicashapp.com";
 
     // Normalisation du numéro pour la RDC (+243)
     $phoneClean = preg_replace('/[^0-9]/', '', $phone);
@@ -97,23 +99,26 @@ function triggerFlexPayPayment($phone, $amount, $provider, $reference) {
         $phoneClean = '243' . substr($phoneClean, 1);
     }
 
+    // Convertir le montant en Cents (Ex: 5.00$ = 500 Cents pour MaxiCash API)
+    $amountInCents = (int)($amount * 100);
+
     $payload = [
-        "merchant" => $flexpayMerchant,
-        "type"     => "1", // 1 pour Mobile Money
-        "phone"    => $phoneClean,
-        "reference"=> $reference,
-        "amount"   => $amount,
-        "currency" => "USD",
-        "callbackUrl" => "https://yebana-okapi.onrender.com/api/flexpay_callback.php"
+        "PayType"          => "MaxiCash",
+        "MerchantID"       => $merchantId,
+        "MerchantPassword" => $merchantPassword,
+        "Amount"           => (string)$amountInCents,
+        "Currency"         => "USD",
+        "Telephone"        => $phoneClean,
+        "Reference"        => $reference,
+        "Language"         => "fr"
     ];
 
-    $ch = curl_init("https://backend.flexpay.cd/api/rest/v1/paymentService");
+    $ch = curl_init("{$baseUrl}/PayEntryPost");
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "Authorization: Bearer " . $flexpayToken
+        "Content-Type: application/json"
     ]);
 
     $response = curl_exec($ch);
@@ -122,7 +127,7 @@ function triggerFlexPayPayment($phone, $amount, $provider, $reference) {
     return json_decode($response, true);
 }
 
-// Récupération du payload JSON
+// Récupération des données reçues du frontend React Native
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -141,14 +146,14 @@ $devise = 'USD';
 
 if (empty($email) || empty($phone)) {
     http_response_code(422);
-    echo json_encode(["status" => "error", "message" => "Veuillez renseigner un e-mail et un numéro Mobile Money."]);
+    echo json_encode(["status" => "error", "message" => "Veuillez renseigner votre e-mail et votre numéro Mobile Money."]);
     exit();
 }
 
 try {
     $pdo->beginTransaction();
 
-    // 1. Récupération ou création de l'utilisateur
+    // 1. Récupération ou création de l'utilisateur dans 'users'
     if (empty($userId)) {
         $stmtUser = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $stmtUser->execute([':email' => $email]);
@@ -160,26 +165,26 @@ try {
             $userId = generateUUID();
             $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :pass, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW())");
             $stmtNewUser->execute([
-                ':id' => $userId,
-                ':email' => $email,
+                ':id'       => $userId,
+                ':email'    => $email,
                 ':username' => explode('@', $email)[0],
-                ':pass' => password_hash('123456', PASSWORD_BCRYPT)
+                ':pass'     => password_hash('123456', PASSWORD_BCRYPT)
             ]);
         }
     }
 
-    // 2. Génération de la référence de paiement et du code à 6 chiffres
-    $refOperateur = strtoupper($provider) . "-" . date("YmdHis") . "-" . rand(1000, 9999);
+    // 2. Génération des références et du code à 6 chiffres
+    $refOperateur = "MAXI-" . strtoupper($provider) . "-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
     $codeConfirmation = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
 
-    // 3. Enregistrement du paiement dans 'payments'
+    // 3. Insertion de la transaction dans 'payments' (Statut EN_COURS)
     $sqlPayment = "INSERT INTO payments (
                         id, user_id, montant, devise, methode_paiement, 
                         reference_operateur, statut_paiement, created_at
                     ) VALUES (
                         :id, :user_id, :montant, :devise, 'MOBILE_MONEY', 
-                        :reference_operateur, 'SUCCES', NOW()
+                        :reference_operateur, 'EN_COURS', NOW()
                     )";
 
     $stmtPayment = $pdo->prepare($sqlPayment);
@@ -191,10 +196,10 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // 4. Déclenchement FlexPay Mobile Money
-    triggerFlexPayPayment($phone, $montant, $provider, $refOperateur);
+    // 4. Appel à l'API MaxiCash
+    $maxiResult = triggerMaxiCashPayment($phone, $montant, $provider, $refOperateur);
 
-    // 5. Envoi de l'e-mail avec le code de confirmation
+    // 5. Envoi de l'e-mail au client
     $emailSent = sendConfirmationEmail($email, $codeConfirmation);
 
     $pdo->commit();
@@ -202,13 +207,12 @@ try {
     http_response_code(201);
     echo json_encode([
         "status"              => "success",
-        "message"             => "Demande de paiement envoyée. Veuillez valider sur votre téléphone.",
+        "message"             => "Demande de paiement transmise. Veuillez valider la transaction sur votre téléphone.",
         "payment_id"          => $paymentId,
         "reference_operateur" => $refOperateur,
         "email"               => $email,
         "code_envoye"         => $emailSent,
-        // Optionnel : renvoyer le code pour les tests en développement local
-        "code_test"           => $codeConfirmation 
+        "maxicash_response"   => $maxiResult
     ]);
 
 } catch (PDOException $e) {
