@@ -161,8 +161,8 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // 4. Envoi de l'e-mail avec les instructions et règlements
-    $emailSent = sendConfirmationEmail($email, $codeConfirmation);
+// 4. Envoi de l'e-mail avec les instructions et règlements
+$emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation);
 
     $pdo->commit();
 
