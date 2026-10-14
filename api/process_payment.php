@@ -19,12 +19,17 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 require_once __DIR__ . '/../Config/database.php';
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
+// --- INCLUSION DE PHPMAILER (Compatible Composer OU Dossier Manuel) ---
 if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
     require_once __DIR__ . '/../vendor/autoload.php';
+} elseif (file_exists(__DIR__ . '/../PHPMailer/src/PHPMailer.php')) {
+    require_once __DIR__ . '/../PHPMailer/src/Exception.php';
+    require_once __DIR__ . '/../PHPMailer/src/PHPMailer.php';
+    require_once __DIR__ . '/../PHPMailer/src/SMTP.php';
 }
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
 
 $database = new Database();
 $pdo = $database->getConnection();
@@ -40,23 +45,32 @@ function generateUUID() {
     );
 }
 
-// Fonction d'envoi de l'e-mail d'instruction de paiement physique
+// Fonction d'envoi d'e-mail avec PHPMailer (Projet IDCONGO)
 function sendPhysicalPaymentEmail($toEmail, $code) {
+    // Vérification de la présence de la classe PHPMailer
+    if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+        error_log("PHPMailer introuvable sur le serveur.");
+        return false;
+    }
+
     $mail = new PHPMailer(true);
 
     try {
+        // Configuration Serveur SMTP
         $mail->isSMTP();
         $mail->Host       = getenv('SMTP_HOST') ?: 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = getenv('SMTP_USER') ?: 'mabandwemarco@gmail.com';
-        $mail->Password   = getenv('SMTP_PASS') ?: 'votre_mot_de_passe_app';
+        $mail->Username   = getenv('SMTP_USER') ?: 'mabandwemarco@gmail.com'; 
+        $mail->Password   = getenv('SMTP_PASS') ?: 'votre_mot_de_passe_application'; // Mot de passe d'application Google
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = getenv('SMTP_PORT') ?: 587;
         $mail->CharSet    = 'UTF-8';
 
+        // Destinataire & Expéditeur
         $mail->setFrom('no-reply@idcongo.cd', 'ID Congo - Recensement');
         $mail->addAddress($toEmail);
 
+        // Contenu de l'e-mail
         $mail->isHTML(true);
         $mail->Subject = 'Instruction de paiement et validation de votre profil - ID Congo';
         $mail->Body    = "
@@ -64,7 +78,7 @@ function sendPhysicalPaymentEmail($toEmail, $code) {
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
                     <h2 style='color: #1E3A8A; text-align: center;'>Enregistrement effectué avec succès</h2>
                     <p>Bonjour,</p>
-                    <p>Votre demande d'enregistrement civil a bien été enregistrée dans notre système.</p>
+                    <p>Votre demande d'enregistrement civil a bien été enregistrée dans notre système ID Congo.</p>
                     
                     <div style='background-color: #EFF6FF; border-left: 4px solid #1E3A8A; padding: 15px; margin: 20px 0;'>
                         <p style='margin: 0; font-weight: bold; color: #1E3A8A;'>Votre Code de Référence :</p>
@@ -90,7 +104,7 @@ function sendPhysicalPaymentEmail($toEmail, $code) {
         $mail->send();
         return true;
     } catch (Exception $e) {
-        error_log("Erreur envoi e-mail: " . $mail->ErrorInfo);
+        error_log("Erreur d'envoi PHPMailer: " . $mail->ErrorInfo);
         return false;
     }
 }
@@ -119,7 +133,7 @@ if (empty($email)) {
 try {
     $pdo->beginTransaction();
 
-    // 1. Récupération ou création de l'utilisateur dans 'users'
+    // 1. Récupération ou création de l'utilisateur
     if (empty($userId)) {
         $stmtUser = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $stmtUser->execute([':email' => $email]);
@@ -139,12 +153,12 @@ try {
         }
     }
 
-    // 2. Génération de la référence et du code à 6 chiffres
+    // 2. Génération des références
     $refOperateur = "PHYS-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
     $codeConfirmation = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
 
-    // 3. Enregistrement dans 'payments' avec statut EN_COURS / PAIEMENT_PHYSIQUE
+    // 3. Enregistrement transaction
     $sqlPayment = "INSERT INTO payments (
                         id, user_id, montant, devise, methode_paiement, 
                         reference_operateur, statut_paiement, created_at
@@ -161,15 +175,15 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-// 4. Envoi de l'e-mail avec les instructions et règlements
-$emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation);
+    // 4. Envoi de l'e-mail PHPMailer
+    $emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation);
 
     $pdo->commit();
 
     http_response_code(201);
     echo json_encode([
         "status"              => "success",
-        "message"             => "Instructions envoyées par e-mail. Veuillez vous présenter au bureau pour effectuer le paiement.",
+        "message"             => "Instructions envoyées par e-mail.",
         "payment_id"          => $paymentId,
         "reference_operateur" => $refOperateur,
         "email"               => $email,
