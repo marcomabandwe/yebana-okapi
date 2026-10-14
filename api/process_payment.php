@@ -60,7 +60,7 @@ function sendPhysicalPaymentEmail($toEmail, $code) {
         $mail->Host       = getenv('SMTP_HOST') ?: 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
         $mail->Username   = getenv('SMTP_USER') ?: 'mabandwemarco@gmail.com'; 
-        $mail->Password   = getenv('SMTP_PASS') ?: 'uque ssld gnxs phly';
+        $mail->Password   = getenv('SMTP_PASS') ?: 'jvwy xert hmtg rxik';
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = getenv('SMTP_PORT') ?: 465;
         $mail->CharSet    = 'UTF-8';
