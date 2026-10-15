@@ -45,31 +45,21 @@ function generateUUID() {
     );
 }
 
-// Fonction d'envoi d'e-mail avec PHPMailer et les variables YE_
+// Fonction d'envoi d'e-mail avec Resend ou PHPMailer
 function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
-    if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
-        error_log("PHPMailer introuvable sur le serveur.");
+    // Récupération stricte depuis la variable d'environnement Render (Aucune clé en dur)
+    $resendApiKey = getenv('YE_RESEND_API_KEY');
+    
+    if (!$resendApiKey) {
+        error_log("Clé API Resend manquante dans les variables d'environnement.");
         return false;
     }
-
-    $mail = new PHPMailer(true);
-
-    try {
-        $mail->isSMTP();
-        $mail->Host       = getenv('YE_SMTP_HOST') ?: 'smtp.gmail.com';
-        $mail->SMTPAuth   = true;
-        $mail->Username   = getenv('YE_SMTP_USER') ?: 'mabandwemarco@gmail.com'; 
-        $mail->Password   = getenv('YE_SMTP_PASS') ?: 'jvwy xert hmtg rxik';
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-        $mail->Port       = getenv('YE_SMTP_PORT') ?: 465;
-        $mail->CharSet    = 'UTF-8';
-
-        $mail->setFrom('mabandwemarco@gmail.com', 'yebana_okapi');
-        $mail->addAddress($toEmail);
-
-        $mail->isHTML(true);
-        $mail->Subject = 'Modalités de paiement et code de confirmation - Yebana-Okapi';
-        $mail->Body    = "
+    
+    $payload = [
+        "from"    => "Yebana-Okapi <onboarding@resend.dev>",
+        "to"      => [$toEmail],
+        "subject" => "Modalités de paiement et code de confirmation - Yebana-Okapi",
+        "html"    => "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
                     <h2 style='color: #1E3A8A; text-align: center;'>Yebana-Okapi - Instructions de Paiement</h2>
@@ -94,16 +84,24 @@ function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
                     </ul>
                 </div>
             </div>
-        ";
+        "
+    ];
 
-        $mail->send();
-        return true;
-    } catch (Exception $e) {
-        error_log("ERREUR SMTP DETAILLEE : " . $mail->ErrorInfo);
-        return false;
-    }
+    $ch = curl_init('https://api.resend.com/emails');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $resendApiKey,
+        'Content-Type: application/json'
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return ($httpCode === 200 || $httpCode === 201);
 }
-
 // Lecture des données POST
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
@@ -138,11 +136,14 @@ try {
             $userId = $user['id'];
         } else {
             $userId = generateUUID();
+            // Ajout d'un suffixe aléatoire pour rendre le username unique et éviter l'erreur de duplication 1062
+            $uniqueUsername = explode('@', $email)[0] . '_' . rand(100, 999);
+
             $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :pass, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW())");
             $stmtNewUser->execute([
                 ':id'       => $userId,
                 ':email'    => $email,
-                ':username' => explode('@', $email)[0],
+                ':username' => $uniqueUsername,
                 ':pass'     => password_hash('123456', PASSWORD_BCRYPT)
             ]);
         }
@@ -170,7 +171,7 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // 4. Envoi de l'e-mail via PHPMailer (avec les modalités et le code)
+    // 4. Envoi de l'e-mail via Resend (avec les modalités et le code)
     $emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation, $refOperateur);
 
     $pdo->commit();
@@ -178,7 +179,7 @@ try {
     http_response_code(201);
     echo json_encode([
         "status"              => "success",
-        "message"             => "Un e-mail contenant les modalités de paiement et le code de confirmation vient de vous être envoyé.",
+        "message"             => "Instructions envoyées par e-mail.",
         "payment_id"          => $paymentId,
         "reference_operateur" => $refOperateur,
         "email"               => $email,
