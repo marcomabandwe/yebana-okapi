@@ -64,7 +64,7 @@ function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
         $mail->Port       = getenv('YE_SMTP_PORT') ?: 465;
         $mail->CharSet    = 'UTF-8';
 
-        $mail->setFrom('mabandwemarco@gmail.com', 'yebana-okapi');
+        $mail->setFrom('mabandwemarco@gmail.com', 'yebana_okapi');
         $mail->addAddress($toEmail);
 
         $mail->isHTML(true);
