@@ -19,18 +19,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 require_once __DIR__ . '/../Config/database.php';
 
-// --- INCLUSION DE PHPMAILER (Compatible Composer OU Dossier Manuel) ---
-if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
-    require_once __DIR__ . '/../vendor/autoload.php';
-} elseif (file_exists(__DIR__ . '/../PHPMailer/src/PHPMailer.php')) {
-    require_once __DIR__ . '/../PHPMailer/src/Exception.php';
-    require_once __DIR__ . '/../PHPMailer/src/PHPMailer.php';
-    require_once __DIR__ . '/../PHPMailer/src/SMTP.php';
-}
-
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
-
 $database = new Database();
 $pdo = $database->getConnection();
 
@@ -45,9 +33,8 @@ function generateUUID() {
     );
 }
 
-// Fonction d'envoi d'e-mail avec Resend ou PHPMailer
-function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
-    // Récupération stricte depuis la variable d'environnement Render (Aucune clé en dur)
+// Fonction d'envoi de l'e-mail unique pour les modalités de paiement des 5$ (SANS code de mot de passe)
+function sendPhysicalPaymentEmail($toEmail, $reference) {
     $resendApiKey = getenv('YE_RESEND_API_KEY');
     
     if (!$resendApiKey) {
@@ -58,24 +45,21 @@ function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
     $payload = [
         "from"    => "yebana_okapi <onboarding@resend.dev>",
         "to"      => [$toEmail],
-        "subject" => "Modalités de paiement et code de confirmation - Yebana-Okapi",
+        "subject" => "Modalités de paiement des frais d'enregistrement (5$) - Yebana-Okapi",
         "html"    => "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
                     <h2 style='color: #1E3A8A; text-align: center;'>Yebana-Okapi - Instructions de Paiement</h2>
                     <p>Bonjour,</p>
-                    <p>Votre demande d'enregistrement a bien été prise en compte. Voici vos éléments de référence :</p>
+                    <p>Votre demande d'enregistrement a bien été prise en compte. Voici votre référence de paiement :</p>
                     
                     <div style='background-color: #EFF6FF; border-left: 4px solid #1E3A8A; padding: 15px; margin: 20px 0;'>
                         <p style='margin: 0; font-weight: bold; color: #1E3A8A;'>Référence de paiement :</p>
-                        <p style='font-size: 16px; font-weight: bold; color: #0F172A; margin: 5px 0;'>{$reference}</p>
-                        
-                        <p style='margin: 10px 0 0 0; font-weight: bold; color: #1E3A8A;'>Votre Code de Confirmation :</p>
-                        <p style='font-size: 24px; font-weight: bold; letter-spacing: 4px; color: #16A34A; margin: 5px 0 0 0;'>{$code}</p>
+                        <p style='font-size: 18px; font-weight: bold; color: #0F172A; margin: 5px 0;'>{$reference}</p>
                     </div>
 
                     <h3 style='color: #B45309;'>Modalités et Consignes importantes :</h3>
-                    <p>Pour finaliser et activer définitivement votre compte, présentez-vous au bureau muni de votre référence.</p>
+                    <p>Pour finaliser et activer définitivement votre compte, présentez-vous au bureau muni de cette référence.</p>
                     
                     <ul style='background-color: #FFFBEB; padding: 15px 20px; border-radius: 6px; color: #92400E; line-height: 1.6;'>
                         <li><strong>Délai (1 à 10 jours) :</strong> Frais de <strong>5.00 $ USD</strong>.</li>
@@ -102,6 +86,7 @@ function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
 
     return ($httpCode === 200 || $httpCode === 201);
 }
+
 // Lecture des données POST
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
@@ -115,6 +100,7 @@ if (!$data) {
 $userId = trim($data['user_id'] ?? '');
 $email = trim($data['email'] ?? '');
 $phone = trim($data['phoneNumber'] ?? '');
+$nom = trim($data['nom'] ?? ''); // Récupération propre du nom si transmis
 $montant = 5.00;
 
 if (empty($email)) {
@@ -126,7 +112,7 @@ if (empty($email)) {
 try {
     $pdo->beginTransaction();
 
-    // 1. Récupération ou création de l'utilisateur
+    // 1. Gestion propre de la table users (sans valeurs parasites)
     if (empty($userId)) {
         $stmtUser = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $stmtUser->execute([':email' => $email]);
@@ -134,25 +120,32 @@ try {
 
         if ($user) {
             $userId = $user['id'];
+            // Mise à jour éventuelle du numéro de téléphone s'il est fourni
+            if (!empty($phone)) {
+                $stmtUpdatePhone = $pdo->prepare("UPDATE users SET telephone = :telephone WHERE id = :id");
+                $stmtUpdatePhone->execute([':telephone' => $phone, ':id' => $userId]);
+            }
         } else {
             $userId = generateUUID();
-            // Ajout d'un suffixe aléatoire pour rendre le username unique et éviter l'erreur de duplication 1062
-            $uniqueUsername = explode('@', $email)[0] . '_' . rand(100, 999);
+            
+            // Génération du username : basé sur le nom ou la partie avant '@' de l'email, suivi de 3 chiffres aléatoires
+            $baseName = !empty($nom) ? preg_replace('/[^a-zA-Z0-9]/', '', $nom) : explode('@', $email)[0];
+            $uniqueUsername = strtolower($baseName) . '_' . rand(100, 999);
 
-            $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :pass, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW())");
+            // Insertion propre avec le champ numéro inclus
+            $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, telephone, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :telephone, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW())");
             $stmtNewUser->execute([
-                ':id'       => $userId,
-                ':email'    => $email,
-                ':username' => $uniqueUsername,
-                ':pass'     => password_hash('123456', PASSWORD_BCRYPT)
+                ':id'        => $userId,
+                ':email'     => $email,
+                ':username'  => $uniqueUsername,
+                ':telephone' => $phone
             ]);
         }
     }
 
-    // 2. Génération des références et du code secret
+    // 2. Génération de la référence de paiement
     $refOperateur = "PHYS-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
-    $codeConfirmation = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
 
     // 3. Enregistrement transaction
     $sqlPayment = "INSERT INTO payments (
@@ -171,8 +164,8 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // 4. Envoi de l'e-mail via Resend (avec les modalités et le code)
-    $emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation, $refOperateur);
+    // 4. Envoi de l'e-mail unique contenant uniquement les modalités et la référence
+    $emailSent = sendPhysicalPaymentEmail($email, $refOperateur);
 
     $pdo->commit();
 
