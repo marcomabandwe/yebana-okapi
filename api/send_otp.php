@@ -60,7 +60,7 @@ try {
     $resendApiKey = getenv('YE_RESEND_API_KEY');$payload = [
         "from"    => "yebana_okapi <onboarding@resend.dev>",
         "to"      => [$email],
-        "subject" => "Code de confirmation de votre compte - Yebana-Okapi",
+        "subject" => "Code de confirmation de votre compte - yebana_okapi",
         "html"    => "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
