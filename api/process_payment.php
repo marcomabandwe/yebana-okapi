@@ -45,9 +45,8 @@ function generateUUID() {
     );
 }
 
-// Fonction d'envoi d'e-mail avec PHPMailer (Projet IDCONGO)
-function sendPhysicalPaymentEmail($toEmail, $code) {
-    // Vérification de la présence de la classe PHPMailer
+// Fonction d'envoi d'e-mail avec PHPMailer et les variables YE_
+function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
     if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
         error_log("PHPMailer introuvable sur le serveur.");
         return false;
@@ -55,33 +54,55 @@ function sendPhysicalPaymentEmail($toEmail, $code) {
 
     $mail = new PHPMailer(true);
 
- try {
+    try {
         $mail->isSMTP();
-        $mail->Host       = getenv('SMTP_HOST') ?: 'smtp.gmail.com';
+        $mail->Host       = getenv('YE_SMTP_HOST') ?: 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = getenv('SMTP_USER') ?: 'mabandwemarco@gmail.com'; 
-        $mail->Password   = getenv('SMTP_PASS') ?: 'jvwy xert hmtg rxik';
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port       = getenv('SMTP_PORT') ?: 465;
+        $mail->Username   = getenv('YE_SMTP_USER') ?: 'mabandwemarco@gmail.com'; 
+        $mail->Password   = getenv('YE_SMTP_PASS') ?: 'jvwy xert hmtg rxik';
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS; // Port 465 utilise SMTPS (SSL)
+        $mail->Port       = getenv('YE_SMTP_PORT') ?: 465;
         $mail->CharSet    = 'UTF-8';
 
-        // --- AJOUT DE CETTE LIGNE POUR LES LOGS DE DÉBOGAGE ---
-        $mail->SMTPDebug  = 2; // Active les logs détaillés dans les journaux du serveur
-        
-        $mail->setFrom('no-reply@idcongo.cd', 'ID Congo - Recensement');
+        $mail->setFrom('mabandwemarco@gmail.com', 'yebana_okapi');
         $mail->addAddress($toEmail);
 
         $mail->isHTML(true);
-        $mail->Subject = 'Instruction de paiement - ID Congo';
-        $mail->Body    = "Votre code de confirmation : {$code}";
+        $mail->Subject = 'Modalités de paiement et code de confirmation - Yebana-Okapi';
+        $mail->Body    = "
+            <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
+                <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
+                    <h2 style='color: #1E3A8A; text-align: center;'>Yebana-Okapi - Instructions de Paiement</h2>
+                    <p>Bonjour,</p>
+                    <p>Votre demande d'enregistrement a bien été prise en compte. Voici vos éléments de référence :</p>
+                    
+                    <div style='background-color: #EFF6FF; border-left: 4px solid #1E3A8A; padding: 15px; margin: 20px 0;'>
+                        <p style='margin: 0; font-weight: bold; color: #1E3A8A;'>Référence de paiement :</p>
+                        <p style='font-size: 16px; font-weight: bold; color: #0F172A; margin: 5px 0;'>{$reference}</p>
+                        
+                        <p style='margin: 10px 0 0 0; font-weight: bold; color: #1E3A8A;'>Votre Code de Confirmation :</p>
+                        <p style='font-size: 24px; font-weight: bold; letter-spacing: 4px; color: #16A34A; margin: 5px 0 0 0;'>{$code}</p>
+                    </div>
+
+                    <h3 style='color: #B45309;'>Modalités et Consignes importantes :</h3>
+                    <p>Pour finaliser et activer définitivement votre compte, présentez-vous au bureau muni de votre référence.</p>
+                    
+                    <ul style='background-color: #FFFBEB; padding: 15px 20px; border-radius: 6px; color: #92400E; line-height: 1.6;'>
+                        <li><strong>Délai (1 à 10 jours) :</strong> Frais de <strong>5.00 $ USD</strong>.</li>
+                        <li><strong>Délai (11 à 20 jours) :</strong> Pénalité, frais majorés à <strong>10.00 $ USD</strong>.</li>
+                        <li><strong>Au-delà de 20 jours :</strong> Risque d'invalidation du dossier.</li>
+                    </ul>
+                </div>
+            </div>
+        ";
 
         $mail->send();
         return true;
     } catch (Exception $e) {
-        // Enregistre l'erreur exacte dans les logs du serveur (Render Logs)
         error_log("ERREUR SMTP DETAILLEE : " . $mail->ErrorInfo);
         return false;
     }
+}
 
 // Lecture des données POST
 $inputData = file_get_contents("php://input");
@@ -127,7 +148,7 @@ try {
         }
     }
 
-    // 2. Génération des références
+    // 2. Génération des références et du code secret
     $refOperateur = "PHYS-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
     $codeConfirmation = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
@@ -143,25 +164,26 @@ try {
 
     $stmtPayment = $pdo->prepare($sqlPayment);
     $stmtPayment->execute([
+        :$paymentId,
         ':id'                  => $paymentId,
         ':user_id'             => $userId,
         ':montant'             => $montant,
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // 4. Envoi de l'e-mail PHPMailer
-    $emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation);
+    // 4. Envoi de l'e-mail via PHPMailer (avec les modalités et le code)
+    $emailSent = sendPhysicalPaymentEmail($email, $codeConfirmation, $refOperateur);
 
     $pdo->commit();
 
     http_response_code(201);
+    // Le code de confirmation n'est plus transmis à l'écran, il est strictement gardé côté serveur / e-mail
     echo json_encode([
         "status"              => "success",
-        "message"             => "Instructions envoyées par e-mail.",
+        "message"             => "Un e-mail contenant les modalités de paiement et le code de confirmation vient de vous être envoyé.",
         "payment_id"          => $paymentId,
         "reference_operateur" => $refOperateur,
         "email"               => $email,
-        "code_confirmation"   => $codeConfirmation,
         "code_envoye"         => $emailSent
     ]);
 
@@ -175,3 +197,4 @@ try {
         "message" => "Erreur lors du traitement : " . $e->getMessage()
     ]);
 }
+?>
