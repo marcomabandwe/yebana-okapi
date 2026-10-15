@@ -60,11 +60,11 @@ function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
         $mail->SMTPAuth   = true;
         $mail->Username   = getenv('YE_SMTP_USER') ?: 'mabandwemarco@gmail.com'; 
         $mail->Password   = getenv('YE_SMTP_PASS') ?: 'jvwy xert hmtg rxik';
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS; // Port 465 utilise SMTPS (SSL)
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
         $mail->Port       = getenv('YE_SMTP_PORT') ?: 465;
         $mail->CharSet    = 'UTF-8';
 
-        $mail->setFrom('mabandwemarco@gmail.com', 'yebana_okapi');
+        $mail->setFrom('mabandwemarco@gmail.com', 'yebana-okapi');
         $mail->addAddress($toEmail);
 
         $mail->isHTML(true);
@@ -164,7 +164,6 @@ try {
 
     $stmtPayment = $pdo->prepare($sqlPayment);
     $stmtPayment->execute([
-        :$paymentId,
         ':id'                  => $paymentId,
         ':user_id'             => $userId,
         ':montant'             => $montant,
@@ -177,7 +176,6 @@ try {
     $pdo->commit();
 
     http_response_code(201);
-    // Le code de confirmation n'est plus transmis à l'écran, il est strictement gardé côté serveur / e-mail
     echo json_encode([
         "status"              => "success",
         "message"             => "Un e-mail contenant les modalités de paiement et le code de confirmation vient de vous être envoyé.",
