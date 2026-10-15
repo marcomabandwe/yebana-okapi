@@ -56,7 +56,7 @@ function sendPhysicalPaymentEmail($toEmail, $code, $reference) {
     }
     
     $payload = [
-        "from"    => "Yebana-Okapi <onboarding@resend.dev>",
+        "from"    => "yebana_okapi <onboarding@resend.dev>",
         "to"      => [$toEmail],
         "subject" => "Modalités de paiement et code de confirmation - Yebana-Okapi",
         "html"    => "
