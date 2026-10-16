@@ -65,7 +65,7 @@ try {
     }
 
     $payload = [
-        "from"    => "yebana_okapi <onboarding@resend.dev>",
+        "from"    => "yebana_okapi <mail.marcomabandwe.online>",
         "to"      => [$email],
         "subject" => "Code de confirmation - Yebana-Okapi",
         "html"    => "
