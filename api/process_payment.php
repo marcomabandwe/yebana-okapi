@@ -33,6 +33,11 @@ function generateUUID() {
     );
 }
 
+// Fonction sécurisée pour nettoyer les chaînes et éviter les erreurs null sur trim()
+function safe_trim($value) {
+    return isset($value) && $value !== null ? trim((string)$value) : '';
+}
+
 // Fonction d'envoi de l'e-mail des modalités via Brevo API v3
 function sendPhysicalPaymentEmail($toEmail, $reference) {
     $brevoApiKey = getenv('BREVO_API_KEY');
@@ -105,18 +110,18 @@ if (!$data) {
     exit();
 }
 
-$userId = trim($data['user_id'] ?? '');
-$email = trim($data['email'] ?? '');
-$phone = trim($data['phoneNumber'] ?? '');
-$nom = trim($data['nom'] ?? '');
-$postnom = trim($data['postnom'] ?? '');
-$prenom = trim($data['prenom'] ?? '');
-$sexe = trim($data['sexe'] ?? '');
-$dateNaissance = trim($data['dateNaissance'] ?? null);
-$lieuNaissance = trim($data['lieuNaissance'] ?? '');
+$userId = safe_trim($data['user_id'] ?? '');
+$email = safe_trim($data['email'] ?? '');
+$phone = safe_trim($data['phoneNumber'] ?? '');
+$nom = safe_trim($data['nom'] ?? '');
+$postnom = safe_trim($data['postnom'] ?? '');
+$prenom = safe_trim($data['prenom'] ?? '');
+$sexe = safe_trim($data['sexe'] ?? '');
+$dateNaissance = isset($data['dateNaissance']) ? safe_trim($data['dateNaissance']) : null;
+$lieuNaissance = safe_trim($data['lieuNaissance'] ?? '');
 
 // Détection dynamique du type de profil reçu de l'application ('Militaire' ou 'Civil')
-$rawType = trim($data['type'] ?? 'Civil');
+$rawType = safe_trim($data['type'] ?? 'Civil');
 $typeProfil = (strcasecmp($rawType, 'Militaire') === 0) ? 'MILITAIRE' : 'CIVIL';
 
 $montant = 5.00;
@@ -138,7 +143,6 @@ try {
 
         if ($user) {
             $userId = $user['id'];
-            // Mise à jour du type de profil et du téléphone si existant
             $stmtUpdateUser = $pdo->prepare("UPDATE users SET telephone = :telephone, type_profil = :type_profil WHERE id = :id");
             $stmtUpdateUser->execute([
                 ':telephone'   => $phone,
@@ -164,16 +168,15 @@ try {
 
     // 2. Si c'est un profil MILITAIRE, on enregistre dans 'profiles_militaire' et 'family_members'
     if ($typeProfil === 'MILITAIRE') {
-        $grade = trim($data['grade'] ?? '');
-        $matricule = trim($data['matricule'] ?? '');
-        $unite = trim($data['unite'] ?? '');
-        $garnison = trim($data['garnison'] ?? '');
-        $origineTribu = trim($data['origineTribu'] ?? '');
-        $emplacement = trim($data['emplacement'] ?? '');
-        $etatCivil = trim($data['etatCivil'] ?? 'celibataire');
-        $photoUrl = trim($data['photo'] ?? null);
+        $grade = safe_trim($data['grade'] ?? '');
+        $matricule = safe_trim($data['matricule'] ?? '');
+        $unite = safe_trim($data['unite'] ?? '');
+        $garnison = safe_trim($data['garnison'] ?? '');
+        $origineTribu = safe_trim($data['origineTribu'] ?? '');
+        $emplacement = safe_trim($data['emplacement'] ?? '');
+        $etatCivil = safe_trim($data['etatCivil'] ?? 'celibataire');
+        $photoUrl = safe_trim($data['photo'] ?? null);
 
-        // Vérifier si le profil militaire existe déjà pour cet utilisateur
         $stmtCheckMil = $pdo->prepare("SELECT id FROM profiles_militaire WHERE user_id = :user_id LIMIT 1");
         $stmtCheckMil->execute([':user_id' => $userId]);
 
@@ -219,11 +222,11 @@ try {
         if ($etatCivil === 'marie' && !empty($conjoint['conjointNom'])) {
             $stmtFamily->execute([
                 ':owner_user_id' => $userId,
-                ':nom'           => $conjoint['conjointNom'],
+                ':nom'           => safe_trim($conjoint['conjointNom']),
                 ':prenom'        => '',
                 ':lien_parental' => 'CONJOINT',
                 ':sexe'          => null,
-                ':date_naissance'=> $conjoint['conjointDateNais'] ?? null,
+                ':date_naissance'=> isset($conjoint['conjointDateNais']) ? safe_trim($conjoint['conjointDateNais']) : null,
                 ':photo_url'     => null
             ]);
         }
@@ -231,7 +234,7 @@ try {
         if ($etatCivil === 'veuf' && !empty($defunt['defuntNom'])) {
             $stmtFamily->execute([
                 ':owner_user_id' => $userId,
-                ':nom'           => $defunt['defuntNom'],
+                ':nom'           => safe_trim($defunt['defuntNom']),
                 ':prenom'        => '',
                 ':lien_parental' => 'DEFUNT',
                 ':sexe'          => null,
@@ -243,7 +246,7 @@ try {
         if ($etatCivil === 'divorce' && !empty($divorce['exConjointNom'])) {
             $stmtFamily->execute([
                 ':owner_user_id' => $userId,
-                ':nom'           => $divorce['exConjointNom'],
+                ':nom'           => safe_trim($divorce['exConjointNom']),
                 ':prenom'        => '',
                 ':lien_parental' => 'DIVORCE',
                 ':sexe'          => null,
@@ -254,15 +257,16 @@ try {
 
         if (!empty($enfants) && is_array($enfants)) {
             foreach ($enfants as $enfant) {
-                if (!empty($enfant['nomComplet'])) {
+                $nomEnfant = safe_trim($enfant['nomComplet'] ?? '');
+                if (!empty($nomEnfant)) {
                     $stmtFamily->execute([
                         ':owner_user_id' => $userId,
-                        ':nom'           => $enfant['nomComplet'],
+                        ':nom'           => $nomEnfant,
                         ':prenom'        => '',
                         ':lien_parental' => 'ENFANT',
-                        ':sexe'          => $enfant['sexe'] ?? null,
-                        ':date_naissance'=> $enfant['dateNaissance'] ?? null,
-                        ':photo_url'     => $enfant['photo'] ?? null
+                        ':sexe'          => safe_trim($enfant['sexe'] ?? null),
+                        ':date_naissance'=> isset($enfant['dateNaissance']) ? safe_trim($enfant['dateNaissance']) : null,
+                        ':photo_url'     => safe_trim($enfant['photo'] ?? null)
                     ]);
                 }
             }
