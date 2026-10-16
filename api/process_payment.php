@@ -43,7 +43,7 @@ function sendPhysicalPaymentEmail($toEmail, $reference) {
     }
     
     $payload = [
-        "from"    => "yebana_okapi <onboarding@resend.dev>",
+        "from"    => "yebana_okapi <mail.marcomabandwe.online>",
         "to"      => [$toEmail],
         "subject" => "Modalités de paiement des frais d'enregistrement (5$) - Yebana-Okapi",
         "html"    => "
