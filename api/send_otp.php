@@ -1,5 +1,5 @@
 <?php
-// api/send_otp.php
+// api/send_otp.php (Version API Brevo)
 
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
@@ -24,7 +24,6 @@ $pdo = $database->getConnection();
 
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
-
 $email = trim($data['email'] ?? '');
 
 if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -45,30 +44,37 @@ try {
         exit();
     }
 
-    // 2. Générer un code OTP à 6 chiffres
+    // 2. Générer le code OTP à 6 chiffres
     $otpCode = str_pad(rand(0, 999999), 6, '0', STR_PAD_LEFT);
 
-    // 3. Stocker temporairement le hash de l'OTP dans password_hash en attendant la validation
+    // 3. Stocker temporairement le hash de l'OTP
     $stmtOtp = $pdo->prepare("UPDATE users SET password_hash = :otp WHERE email = :email");
     $stmtOtp->execute([
         ':otp'   => password_hash($otpCode, PASSWORD_BCRYPT),
         ':email' => $email
     ]);
 
-    // 4. Envoi de l'e-mail via l'API Resend
-    $resendApiKey = getenv('YE_RESEND_API_KEY');
-    
-    if (!$resendApiKey) {
+    // 4. Envoi via l'API Brevo
+    $brevoApiKey = getenv('BREVO_API_KEY');
+
+    if (!$brevoApiKey) {
         http_response_code(500);
-        echo json_encode(["status" => "error", "message" => "Clé API Resend non configurée sur le serveur."]);
+        echo json_encode(["status" => "error", "message" => "Clé API Brevo non configurée sur le serveur."]);
         exit();
     }
 
     $payload = [
-        "from"    => "yebana_okapi <mail.marcomabandwe.online>",
-        "to"      => [$email],
-        "subject" => "Code de confirmation - Yebana-Okapi",
-        "html"    => "
+        "sender" => [
+            "name"  => "Yebana-Okapi",
+            "email" => "mabandwemarco@gmail.com" // Mettez ici l'e-mail validé sur votre compte Brevo
+        ],
+        "to" => [
+            [
+                "email" => $email
+            ]
+        ],
+        "subject"     => "Code de confirmation - Yebana-Okapi",
+        "htmlContent" => "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
                     <h2 style='color: #1E3A8A; text-align: center;'>Yebana-Okapi - Code de Confirmation</h2>
@@ -80,20 +86,21 @@ try {
                     </div>
 
                     <p style='color: #64748B; font-size: 13px; text-align: center;'>
-                        Ce code est strictement personnel et valable pour votre session en cours.
+                        Ce code est strictement personnel.
                     </p>
                 </div>
             </div>
         "
     ];
 
-    $ch = curl_init('https://api.resend.com/emails');
+    $ch = curl_init('https://api.brevo.com/v3/smtp/email');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $resendApiKey,
-        'Content-Type: application/json'
+        'api-key: ' . $brevoApiKey,
+        'Content-Type: application/json',
+        'Accept: application/json'
     ]);
 
     $response = curl_exec($ch);
@@ -102,21 +109,21 @@ try {
 
     if ($httpCode === 200 || $httpCode === 201) {
         echo json_encode([
-            "status" => "success",
-            "message" => "Code de confirmation envoyé avec succès par e-mail."
+            "status"  => "success",
+            "message" => "Code de confirmation envoyé avec succès par e-mail via Brevo."
         ]);
     } else {
         http_response_code(500);
         echo json_encode([
-            "status" => "error",
-            "message" => "Erreur lors de l'envoi de l'e-mail via Resend (Code $httpCode)."
+            "status"  => "error",
+            "message" => "Erreur Brevo (Code $httpCode) : " . $response
         ]);
     }
 
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
-        "status" => "error",
+        "status"  => "error",
         "message" => "Erreur serveur : " . $e->getMessage()
     ]);
 }
