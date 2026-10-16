@@ -35,18 +35,25 @@ function generateUUID() {
 
 // Fonction d'envoi de l'e-mail unique pour les modalités de paiement des 5$ (SANS code de mot de passe)
 function sendPhysicalPaymentEmail($toEmail, $reference) {
-    $resendApiKey = getenv('YE_RESEND_API_KEY');
+    $brevoApiKey = getenv('BREVO_API_KEY');
     
-    if (!$resendApiKey) {
-        error_log("Clé API Resend manquante dans les variables d'environnement.");
+    if (!$brevoApiKey) {
+        error_log("Clé API Brevo manquante dans les variables d'environnement.");
         return false;
     }
     
     $payload = [
-        "from"    => "yebana_okapi <mail.marcomabandwe.online>",
-        "to"      => [$toEmail],
-        "subject" => "Modalités de paiement des frais d'enregistrement (5$) - Yebana-Okapi",
-        "html"    => "
+        "sender" => [
+            "name"  => "Yebana-Okapi",
+            "email" => "mabandwemarco@gmail.com"
+        ],
+        "to" => [
+            [
+                "email" => $toEmail
+            ]
+        ],
+        "subject"     => "Modalités de paiement des frais d'enregistrement (5$) - Yebana-Okapi",
+        "htmlContent" => "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
                     <h2 style='color: #1E3A8A; text-align: center;'>Yebana-Okapi - Instructions de Paiement</h2>
@@ -71,13 +78,14 @@ function sendPhysicalPaymentEmail($toEmail, $reference) {
         "
     ];
 
-    $ch = curl_init('https://api.resend.com/emails');
+    $ch = curl_init('https://api.brevo.com/v3/smtp/email');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $resendApiKey,
-        'Content-Type: application/json'
+        'api-key: ' . $brevoApiKey,
+        'Content-Type: application/json',
+        'Accept: application/json'
     ]);
 
     $response = curl_exec($ch);
