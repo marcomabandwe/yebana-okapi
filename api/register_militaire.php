@@ -181,22 +181,24 @@ try {
         ]);
     }
 
-    if (!empty($enfants) && is_array($enfants)) {
-        foreach ($enfants as $enfant) {
-            $nomEnfant = safe_trim($enfant['nomComplet'] ?? '');
-            if (!empty($nomEnfant)) {
-                $stmtFamily->execute([
-                    ':owner_user_id' => $userId,
-                    ':nom'           => $nomEnfant,
-                    ':prenom'        => '',
-                    ':lien_parental' => 'ENFANT',
-                    ':sexe'          => safe_trim($enfant['sexe'] ?? null),
-                    ':date_naissance'=> isset($enfant['dateNaissance']) ? safe_trim($enfant['dateNaissance']) : null,
-                    ':photo_url'     => safe_trim($enfant['photo'] ?? null)
-                ]);
+ if (!empty($enfants) && is_array($enfants)) {
+            foreach ($enfants as $enfant) {
+                if (!empty($enfant['nomComplet'])) {
+                    // On récupère le sexe en s'assurant qu'il prend bien 'M' ou 'F', avec 'M' par défaut si vide
+                    $sexeEnfant = !empty($enfant['sexe']) ? trim($enfant['sexe']) : 'M';
+
+                    $stmtFamily->execute([
+                        ':owner_user_id' => $userId,
+                        ':nom'           => $enfant['nomComplet'],
+                        ':prenom'        => '',
+                        ':lien_parental' => 'ENFANT',
+                        ':sexe'          => $sexeEnfant,
+                        ':date_naissance'=> $enfant['dateNaissance'] ?? null,
+                        ':photo_url'     => $enfant['photo'] ?? null
+                    ]);
+                }
             }
         }
-    }
 
     $pdo->commit();
 
