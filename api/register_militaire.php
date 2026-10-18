@@ -133,34 +133,33 @@ try {
         ]);
     }
 
-    // 3. Enregistrement de la famille dans family_members
-    $conjoint = $data['conjoint'] ?? null;
-    $defunt = $data['defunt'] ?? null;
-    $divorce = $data['divorce'] ?? null;
-    $enfants = $data['enfants'] ?? [];
-
+// 3. Enregistrement des membres de la famille dans la table exacte 'family_members'
     $stmtFamily = $pdo->prepare("INSERT INTO family_members (
-        owner_user_id, nom, prenom, lien_parental, sexe, date_naissance, photo_url, created_at
+        id, owner_user_id, nom, prenom, lien_parental, sexe, date_naissance, photo_url, created_at
     ) VALUES (
-        :owner_user_id, :nom, :prenom, :lien_parental, :sexe, :date_naissance, :photo_url, NOW()
+        :id, :owner_user_id, :nom, :prenom, :lien_parental, :sexe, :date_naissance, :photo_url, NOW()
     )");
 
+    // Insertion du Conjoint si marié
     if ($etatCivil === 'marie' && !empty($conjoint['conjointNom'])) {
         $stmtFamily->execute([
+            ':id'            => generateUUID(),
             ':owner_user_id' => $userId,
-            ':nom'           => safe_trim($conjoint['conjointNom']),
+            ':nom'           => $conjoint['conjointNom'],
             ':prenom'        => '',
             ':lien_parental' => 'CONJOINT',
             ':sexe'          => null,
-            ':date_naissance'=> isset($conjoint['conjointDateNais']) ? safe_trim($conjoint['conjointDateNais']) : null,
+            ':date_naissance'=> $conjoint['conjointDateNais'] ?? null,
             ':photo_url'     => null
         ]);
     }
 
+    // Insertion du Défunt si veuf/veuve
     if ($etatCivil === 'veuf' && !empty($defunt['defuntNom'])) {
         $stmtFamily->execute([
+            ':id'            => generateUUID(),
             ':owner_user_id' => $userId,
-            ':nom'           => safe_trim($defunt['defuntNom']),
+            ':nom'           => $defunt['defuntNom'],
             ':prenom'        => '',
             ':lien_parental' => 'DEFUNT',
             ':sexe'          => null,
@@ -169,10 +168,12 @@ try {
         ]);
     }
 
+    // Insertion de l'ex-conjoint si divorcé
     if ($etatCivil === 'divorce' && !empty($divorce['exConjointNom'])) {
         $stmtFamily->execute([
+            ':id'            => generateUUID(),
             ':owner_user_id' => $userId,
-            ':nom'           => safe_trim($divorce['exConjointNom']),
+            ':nom'           => $divorce['exConjointNom'],
             ':prenom'        => '',
             ':lien_parental' => 'DIVORCE',
             ':sexe'          => null,
@@ -181,25 +182,24 @@ try {
         ]);
     }
 
- if (!empty($enfants) && is_array($enfants)) {
-            foreach ($enfants as $enfant) {
-                if (!empty($enfant['nomComplet'])) {
-                    // On récupère le sexe en s'assurant qu'il prend bien 'M' ou 'F', avec 'M' par défaut si vide
-                    $sexeEnfant = !empty($enfant['sexe']) ? trim($enfant['sexe']) : 'M';
-
-                    $stmtFamily->execute([
-                        ':owner_user_id' => $userId,
-                        ':nom'           => $enfant['nomComplet'],
-                        ':prenom'        => '',
-                        ':lien_parental' => 'ENFANT',
-                        ':sexe'          => $sexeEnfant,
-                        ':date_naissance'=> $enfant['dateNaissance'] ?? null,
-                        ':photo_url'     => $enfant['photo'] ?? null
-                    ]);
-                }
+    // Insertion des enfants
+    if (!empty($enfants) && is_array($enfants)) {
+        foreach ($enfants as $enfant) {
+            if (!empty($enfant['nomComplet'])) {
+                $sexeEnfant = !empty($enfant['sexe']) ? trim($enfant['sexe']) : 'M';
+                $stmtFamily->execute([
+                    ':id'            => generateUUID(),
+                    ':owner_user_id' => $userId,
+                    ':nom'           => $enfant['nomComplet'],
+                    ':prenom'        => '',
+                    ':lien_parental' => 'ENFANT',
+                    ':sexe'          => $sexeEnfant,
+                    ':date_naissance'=> $enfant['dateNaissance'] ?? null,
+                    ':photo_url'     => $enfant['photo'] ?? null
+                ]);
             }
         }
-
+    }
     $pdo->commit();
 
     http_response_code(201);
