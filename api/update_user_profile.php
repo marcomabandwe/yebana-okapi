@@ -4,22 +4,30 @@ header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 header("Content-Type: application/json; charset=UTF-8");
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit(); }
+// Empêcher l'affichage d'erreurs HTML brutes pour ne pas casser le JSON React Native
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
 
-require_once __DIR__ . '/../Config/database.php';
-$database = new Database();
-$pdo = $database->getConnection();
-$data = json_decode(file_get_contents("php://input"), true);
-
-$userId = $data['user_id'] ?? '';
-$type   = strtoupper($data['type'] ?? 'CIVIL');
-
-if (empty($userId)) {
-    echo json_encode(["status" => "error", "message" => "ID utilisateur manquant."]);
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
     exit();
 }
 
+require_once __DIR__ . '/../Config/database.php';
+
 try {
+    $database = new Database();
+    $pdo = $database->getConnection();
+    $data = json_decode(file_get_contents("php://input"), true);
+
+    $userId = $data['user_id'] ?? '';
+    $type   = strtoupper($data['type'] ?? 'CIVIL');
+
+    if (empty($userId)) {
+        echo json_encode(["status" => "error", "message" => "ID utilisateur manquant."]);
+        exit();
+    }
+
     if ($type === 'MILITAIRE') {
         $stmt = $pdo->prepare("UPDATE profiles_militaire SET 
             nom = :nom, 
@@ -45,17 +53,17 @@ try {
             ':postnom'  => $data['postnom'] ?? '',
             ':prenom'   => $data['prenom'] ?? '',
             ':sexe'     => $data['sexe'] ?? 'M',
-            ':dn'       => $data['date_naissance'] ?: null,
-            ':ln'       => $data['lieu_naissance'] ?: null,
-            ':ec'       => $data['etat_civil'] ?: 'CELIBATAIRE',
-            ':tel'      => $data['telephone'] ?: null,
-            ':mat'      => $data['matricule'] ?: null,
-            ':grade'    => $data['grade'] ?: null,
-            ':unite'    => $data['unite'] ?: null,
-            ':garnison' => $data['garnison'] ?: null,
-            ':emp'      => $data['emplacement'] ?: null,
-            ':tribu'    => $data['origineTribu'] ?: null,
-            ':photo'    => $data['photo_url'] ?: null,
+            ':dn'       => !empty($data['date_naissance']) ? $data['date_naissance'] : null,
+            ':ln'       => !empty($data['lieu_naissance']) ? $data['lieu_naissance'] : null,
+            ':ec'       => !empty($data['etat_civil']) ? $data['etat_civil'] : 'CELIBATAIRE',
+            ':tel'      => !empty($data['telephone']) ? $data['telephone'] : null,
+            ':mat'      => !empty($data['matricule']) ? $data['matricule'] : null,
+            ':grade'    => !empty($data['grade']) ? $data['grade'] : null,
+            ':unite'    => !empty($data['unite']) ? $data['unite'] : null,
+            ':garnison' => !empty($data['garnison']) ? $data['garnison'] : null,
+            ':emp'      => !empty($data['emplacement']) ? $data['emplacement'] : null,
+            ':tribu'    => !empty($data['origineTribu']) ? $data['origineTribu'] : null,
+            ':photo'    => !empty($data['photo_url']) ? $data['photo_url'] : null,
         ]);
     } else {
         $stmt = $pdo->prepare("UPDATE profiles_civil SET 
@@ -78,17 +86,17 @@ try {
             ':postnom' => $data['postnom'] ?? '',
             ':prenom'  => $data['prenom'] ?? '',
             ':sexe'    => $data['sexe'] ?? 'M',
-            ':dn'      => $data['date_naissance'] ?: null,
-            ':ln'      => $data['lieu_naissance'] ?: null,
-            ':ec'      => $data['etat_civil'] ?: 'CELIBATAIRE',
-            ':tel'     => $data['telephone'] ?: null,
-            ':prof'    => $data['profession'] ?: null,
-            ':adresse' => $data['adresse_physique'] ?: null,
-            ':photo'   => $data['photo_url'] ?: null,
+            ':dn'      => !empty($data['date_naissance']) ? $data['date_naissance'] : null,
+            ':ln'      => !empty($data['lieu_naissance']) ? $data['lieu_naissance'] : null,
+            ':ec'      => !empty($data['etat_civil']) ? $data['etat_civil'] : 'CELIBATAIRE',
+            ':tel'     => !empty($data['telephone']) ? $data['telephone'] : null,
+            ':prof'    => !empty($data['profession']) ? $data['profession'] : null,
+            ':adresse' => !empty($data['adresse_physique']) ? $data['adresse_physique'] : null,
+            ':photo'   => !empty($data['photo_url']) ? $data['photo_url'] : null,
         ]);
     }
 
-    // Mise à jour synchrone du téléphone dans la table users si besoin
+    // Mise à jour synchrone du numéro de téléphone principal
     if (!empty($data['telephone'])) {
         $stmtUser = $pdo->prepare("UPDATE users SET telephone = :tel WHERE id = :uid");
         $stmtUser->execute([':tel' => $data['telephone'], ':uid' => $userId]);
@@ -96,7 +104,8 @@ try {
 
     echo json_encode(["status" => "success", "message" => "Profil mis à jour avec succès."]);
 
-} catch (PDOException $e) {
-    echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode(["status" => "error", "message" => "Erreur SQL : " . $e->getMessage()]);
 }
 ?>
