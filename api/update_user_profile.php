@@ -104,8 +104,20 @@ try {
 
     echo json_encode(["status" => "success", "message" => "Profil mis à jour avec succès."]);
 
-} catch (Exception $e) {
-    http_response_code(500);
-    echo json_encode(["status" => "error", "message" => "Erreur SQL : " . $e->getMessage()]);
+} catch (PDOException $e) {
+    http_response_code(400);
+
+    // Vérification du code d'erreur de doublon SQL 1062
+    if ($e->getCode() == '23000' || $e->errorInfo[1] == 1062) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Ce profil existe déjà dans la base de données. Vos informations ont été mises à jour."
+        ]);
+    } else {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Une erreur est survenue lors de l'enregistrement de vos informations."
+        ]);
+    }
 }
 ?>
