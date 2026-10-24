@@ -6,6 +6,10 @@ header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
+// Désactiver l'affichage direct des erreurs HTML pour protéger le format JSON
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -33,7 +37,6 @@ function generateUUID() {
     );
 }
 
-// Lecture des données JSON transmises par l'application
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -43,7 +46,6 @@ if (!$data) {
     exit();
 }
 
-// Récupération des données du formulaire Militaire
 $nom = trim($data['nom'] ?? '');
 $postnom = trim($data['postnom'] ?? '');
 $prenom = trim($data['prenom'] ?? '');
@@ -61,7 +63,6 @@ $email = trim($data['email'] ?? '');
 $telephone = trim($data['telephone'] ?? '');
 $photoUrl = trim($data['photo'] ?? null);
 
-// Famille
 $conjoint = $data['conjoint'] ?? null;
 $defunt = $data['defunt'] ?? null;
 $divorce = $data['divorce'] ?? null;
@@ -76,7 +77,6 @@ if (empty($nom) || empty($prenom) || empty($grade) || empty($matricule)) {
 try {
     $pdo->beginTransaction();
 
-    // 1. Gestion de l'utilisateur dans la table 'users'
     $userId = null;
     if (!empty($email)) {
         $stmtUserCheck = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
@@ -106,13 +106,13 @@ try {
         ]);
     }
 
-    // 2. Enregistrement dans la table 'profiles_militaire'
+    // Inscription du profil militaire
     $stmtProfile = $pdo->prepare("INSERT INTO profiles_militaire (
         user_id, nom, postnom, prenom, sexe, date_naissance, lieu_naissance, 
-        etat_civil, telephone, matricule, grade, unite, garnison, photo_url, created_at
+        etat_civil, telephone, matricule, grade, unite, garnison, emplacement, origineTribu, photo_url, created_at
     ) VALUES (
         :user_id, :nom, :postnom, :prenom, :sexe, :date_naissance, :lieu_naissance, 
-        :etat_civil, :telephone, :matricule, :grade, :unite, :garnison, :photo_url, NOW()
+        :etat_civil, :telephone, :matricule, :grade, :unite, :garnison, :emplacement, :origineTribu, :photo_url, NOW()
     )");
 
     $stmtProfile->execute([
@@ -129,17 +129,19 @@ try {
         ':grade'          => $grade,
         ':unite'          => $unite,
         ':garnison'       => $garnison,
+        ':emplacement'    => $emplacement,
+        ':origineTribu'   => $origineTribu,
         ':photo_url'      => $photoUrl
     ]);
 
-    // 3. Enregistrement des membres de la famille dans la table 'family_members'
+    // Requête unifiée pour insérer tous les types de membres de famille avec les nouveaux champs
     $stmtFamily = $pdo->prepare("INSERT INTO family_members (
-        id, owner_user_id, nom, prenom, lien_parental, sexe, date_naissance, photo_url, created_at
+        id, owner_user_id, nom, prenom, lien_parental, sexe, date_naissance, lieu_naissance, profession, date_deces, nom_cimetiere, date_divorce, photo_url, created_at
     ) VALUES (
-        :id, :owner_user_id, :nom, :prenom, :lien_parental, :sexe, :date_naissance, :photo_url, NOW()
+        :id, :owner_user_id, :nom, :prenom, :lien_parental, :sexe, :date_naissance, :lieu_naissance, :profession, :date_deces, :nom_cimetiere, :date_divorce, :photo_url, NOW()
     )");
 
-    // Insertion du Conjoint si marié
+    // Conjoint
     if ($etatCivil === 'marie' && !empty($conjoint['conjointNom'])) {
         $stmtFamily->execute([
             ':id'            => generateUUID(),
@@ -149,11 +151,16 @@ try {
             ':lien_parental' => 'CONJOINT',
             ':sexe'          => 'F',
             ':date_naissance'=> !empty($conjoint['conjointDateNais']) ? $conjoint['conjointDateNais'] : null,
+            ':lieu_naissance'=> $conjoint['conjointLieuNais'] ?? null,
+            ':profession'    => null,
+            ':date_deces'    => null,
+            ':nom_cimetiere' => null,
+            ':date_divorce'  => null,
             ':photo_url'     => null
         ]);
     }
 
-    // Insertion du Défunt si veuf/veuve
+    // Défunt
     if ($etatCivil === 'veuf' && !empty($defunt['defuntNom'])) {
         $stmtFamily->execute([
             ':id'            => generateUUID(),
@@ -163,11 +170,16 @@ try {
             ':lien_parental' => 'DEFUNT',
             ':sexe'          => 'M',
             ':date_naissance'=> null,
+            ':lieu_naissance'=> null,
+            ':profession'    => null,
+            ':date_deces'    => !empty($defunt['defuntDateDeces']) ? $defunt['defuntDateDeces'] : null,
+            ':nom_cimetiere' => $defunt['cimetiereNom'] ?? null,
+            ':date_divorce'  => null,
             ':photo_url'     => null
         ]);
     }
 
-    // Insertion de l'ex-conjoint si divorcé
+    // Divorcé
     if ($etatCivil === 'divorce' && !empty($divorce['exConjointNom'])) {
         $stmtFamily->execute([
             ':id'            => generateUUID(),
@@ -177,23 +189,32 @@ try {
             ':lien_parental' => 'DIVORCE',
             ':sexe'          => 'F',
             ':date_naissance'=> null,
+            ':lieu_naissance'=> null,
+            ':profession'    => null,
+            ':date_deces'    => null,
+            ':nom_cimetiere' => null,
+            ':date_divorce'  => !empty($divorce['dateDivorce']) ? $divorce['dateDivorce'] : null,
             ':photo_url'     => null
         ]);
     }
 
-    // Insertion des enfants
+    // Enfants
     if (!empty($enfants) && is_array($enfants)) {
         foreach ($enfants as $enfant) {
             if (!empty($enfant['nomComplet'])) {
-                $sexeEnfant = !empty($enfant['sexe']) ? trim($enfant['sexe']) : 'M';
                 $stmtFamily->execute([
                     ':id'            => generateUUID(),
                     ':owner_user_id' => $userId,
                     ':nom'           => $enfant['nomComplet'],
                     ':prenom'        => '',
                     ':lien_parental' => 'ENFANT',
-                    ':sexe'          => $sexeEnfant,
+                    ':sexe'          => !empty($enfant['sexe']) ? trim($enfant['sexe']) : 'M',
                     ':date_naissance'=> !empty($enfant['dateNaissance']) ? $enfant['dateNaissance'] : null,
+                    ':lieu_naissance'=> $enfant['lieuNaissance'] ?? null,
+                    ':profession'    => $enfant['profession'] ?? null,
+                    ':date_deces'    => null,
+                    ':nom_cimetiere' => null,
+                    ':date_divorce'  => null,
                     ':photo_url'     => $enfant['photo'] ?? null
                 ]);
             }
@@ -209,7 +230,7 @@ try {
         "user_id" => $userId
     ]);
 
-} catch (PDOException $e) {
+} catch (Exception $e) {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
