@@ -45,36 +45,41 @@ try {
         exit();
     }
 
-    // Nettoyage rigoureux du type de profil
     $typeProfil = trim(strtoupper($user['type_profil'] ?? 'CIVIL'));
     $profileData = [];
 
-    // 2. Récupérer le profil spécifique selon le type
+    // 2. Récupérer le profil spécifique avec une jointure ou une recherche sécurisée
     if ($typeProfil === 'MILITAIRE') {
         $stmtProfile = $pdo->prepare("SELECT * FROM profiles_militaire WHERE user_id = :user_id LIMIT 1");
         $stmtProfile->execute([':user_id' => $userId]);
         $profileData = $stmtProfile->fetch(PDO::FETCH_ASSOC) ?: [];
         $profileData['type'] = 'Militaire';
     } else {
-        // Par défaut, on cherche dans civil
         $stmtProfile = $pdo->prepare("SELECT * FROM profiles_civil WHERE user_id = :user_id LIMIT 1");
         $stmtProfile->execute([':user_id' => $userId]);
         $profileData = $stmtProfile->fetch(PDO::FETCH_ASSOC) ?: [];
+        
+        // Sécurité de secours : si la recherche par user_id ne donne rien, on essaie par id direct
+        if (empty($profileData)) {
+            $stmtProfileFallback = $pdo->prepare("SELECT * FROM profiles_civil WHERE id = :user_id LIMIT 1");
+            $stmtProfileFallback->execute([':user_id' => $userId]);
+            $profileData = $stmtProfileFallback->fetch(PDO::FETCH_ASSOC) ?: [];
+        }
         $profileData['type'] = 'Civil';
     }
 
-    // 3. Récupérer les membres de la famille
+    // 3. Récupérer les membres de la famille / ayants droit
     $stmtFamily = $pdo->prepare("SELECT * FROM family_members WHERE owner_user_id = :user_id");
     $stmtFamily->execute([':user_id' => $userId]);
     $familyMembers = $stmtFamily->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-    // 4. Fusion sécurisée (si la table du profil est vide, on prend les infos de la table users)
+    // 4. Fusion des données en ciblant exactement les noms de colonnes de tes images
     $formattedUserData = [
         'user_id'         => $user['id'],
         'username'        => $user['username'] ?? '',
         'email'           => $user['email'] ?? '',
         'telephone'       => $profileData['telephone'] ?? $user['telephone'] ?? '',
-        'type'            => $profileData['type'] ?? ($typeProfil === 'MILITAIRE' ? 'Militaire' : 'CIVIL'),
+        'type'            => $profileData['type'] ?? ($typeProfil === 'MILITAIRE' ? 'Militaire' : 'Civil'),
         'nom'             => $profileData['nom'] ?? '',
         'postnom'         => $profileData['postnom'] ?? '',
         'prenom'          => $profileData['prenom'] ?? '',
@@ -95,7 +100,7 @@ try {
         'emplacement'     => $profileData['emplacement'] ?? '',
         'origineTribu'    => $profileData['origineTribu'] ?? '',
 
-        // Spécifiques Civil
+        // Spécifiques Civil (basé sur les colonnes de ton image profiles_civil)
         'profession'      => $profileData['profession'] ?? '',
         'adressePhysique' => $profileData['adresse_physique'] ?? '',
     ];
