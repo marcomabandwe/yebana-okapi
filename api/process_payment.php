@@ -6,6 +6,9 @@ header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -33,7 +36,6 @@ function generateUUID() {
     );
 }
 
-// Fonction sécurisée pour nettoyer les chaînes et éviter les erreurs null sur trim()
 function safe_trim($value) {
     return isset($value) && $value !== null ? trim((string)$value) : '';
 }
@@ -57,7 +59,7 @@ function sendPhysicalPaymentEmail($toEmail, $reference) {
                 "email" => $toEmail
             ]
         ],
-        "subject"     => "Modalités de paiement des frais d'enregistrement (5$) - Yebana-Okapi",
+        "subject"   => "Modalités de paiement des frais d'enregistrement (5$) - Yebana-Okapi",
         "htmlContent" => "
             <div style='font-family: Arial, sans-serif; padding: 20px; background-color: #f4f6f9;'>
                 <div style='max-width: 550px; margin: auto; background: white; padding: 25px; border-radius: 8px;'>
@@ -100,7 +102,6 @@ function sendPhysicalPaymentEmail($toEmail, $reference) {
     return ($httpCode === 200 || $httpCode === 201);
 }
 
-// Lecture des données POST
 $inputData = file_get_contents("php://input");
 $data = json_decode($inputData, true);
 
@@ -111,172 +112,76 @@ if (!$data) {
 }
 
 $userId = safe_trim($data['user_id'] ?? '');
-$email = safe_trim($data['email'] ?? '');
+$email = strtolower(safe_trim($data['email'] ?? ''));
 $phone = safe_trim($data['phoneNumber'] ?? '');
 $nom = safe_trim($data['nom'] ?? '');
-$postnom = safe_trim($data['postnom'] ?? '');
-$prenom = safe_trim($data['prenom'] ?? '');
-$sexe = safe_trim($data['sexe'] ?? '');
-$dateNaissance = isset($data['dateNaissance']) ? safe_trim($data['dateNaissance']) : null;
-$lieuNaissance = safe_trim($data['lieuNaissance'] ?? '');
-
-// Détection dynamique du type de profil reçu de l'application ('Militaire' ou 'Civil')
 $rawType = safe_trim($data['type'] ?? 'Civil');
 $typeProfil = (strcasecmp($rawType, 'Militaire') === 0) ? 'MILITAIRE' : 'CIVIL';
 
 $montant = 5.00;
 
-if (empty($email)) {
+if (empty($email) && empty($userId)) {
     http_response_code(422);
-    echo json_encode(["status" => "error", "message" => "Veuillez renseigner votre adresse e-mail."]);
+    echo json_encode(["status" => "error", "message" => "Identifiant ou e-mail manquant pour le paiement."]);
     exit();
 }
 
 try {
     $pdo->beginTransaction();
 
-    // 1. Gestion de la table users avec le bon type_profil dynamique
-    if (empty($userId)) {
-        $stmtUser = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
-        $stmtUser->execute([':email' => $email]);
-        $user = $stmtUser->fetch();
-
-        if ($user) {
-            $userId = $user['id'];
-            $stmtUpdateUser = $pdo->prepare("UPDATE users SET telephone = :telephone, type_profil = :type_profil WHERE id = :id");
-            $stmtUpdateUser->execute([
-                ':telephone'   => $phone,
-                ':type_profil' => $typeProfil,
-                ':id'          => $userId
-            ]);
-        } else {
-            $userId = generateUUID();
-            $baseName = !empty($nom) ? preg_replace('/[^a-zA-Z0-9]/', '', $nom) : explode('@', $email)[0];
-            $prefixCode = ($typeProfil === 'MILITAIRE') ? 'mil' : 'civ';
-            $uniqueUsername = 'yo_' . $prefixCode . '_' . strtolower($baseName) . '_' . rand(100, 999);
-
-            $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, telephone, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :telephone, :type_profil, 'EN_ATTENTE', 0, NOW(), NOW())");
-            $stmtNewUser->execute([
-                ':id'          => $userId,
-                ':email'       => $email,
-                ':username'    => $uniqueUsername,
-                ':telephone'   => $phone,
-                ':type_profil' => $typeProfil
-            ]);
-        }
+    // Recherche stricte de l'utilisateur existant par ID ou par Email pour NE JAMAIS créer de doublon
+    $user = null;
+    if (!empty($userId)) {
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE id = :id LIMIT 1");
+        $stmt->execute([':id' => $userId]);
+        $user = $stmt->fetch();
     }
 
-    // 2. Si c'est un profil MILITAIRE, on enregistre dans 'profiles_militaire' et 'family_members'
-    if ($typeProfil === 'MILITAIRE') {
-        $grade = safe_trim($data['grade'] ?? '');
-        $matricule = safe_trim($data['matricule'] ?? '');
-        $unite = safe_trim($data['unite'] ?? '');
-        $garnison = safe_trim($data['garnison'] ?? '');
-        $origineTribu = safe_trim($data['origineTribu'] ?? '');
-        $emplacement = safe_trim($data['emplacement'] ?? '');
-        $etatCivil = safe_trim($data['etatCivil'] ?? 'celibataire');
-        $photoUrl = safe_trim($data['photo'] ?? null);
-
-        $stmtCheckMil = $pdo->prepare("SELECT id FROM profiles_militaire WHERE user_id = :user_id LIMIT 1");
-        $stmtCheckMil->execute([':user_id' => $userId]);
-
-        if (!$stmtCheckMil->fetch()) {
-            $stmtProfile = $pdo->prepare("INSERT INTO profiles_militaire (
-                user_id, nom, postnom, prenom, sexe, date_naissance, lieu_naissance, 
-                etat_civil, telephone, matricule, grade, unite, garnison, photo_url, created_at
-            ) VALUES (
-                :user_id, :nom, :postnom, :prenom, :sexe, :date_naissance, :lieu_naissance, 
-                :etat_civil, :telephone, :matricule, :grade, :unite, :garnison, :photo_url, NOW()
-            )");
-
-            $stmtProfile->execute([
-                ':user_id'        => $userId,
-                ':nom'            => $nom,
-                ':postnom'        => $postnom,
-                ':prenom'         => $prenom,
-                ':sexe'           => $sexe,
-                ':date_naissance' => !empty($dateNaissance) ? $dateNaissance : null,
-                ':lieu_naissance' => $lieuNaissance,
-                ':etat_civil'     => $etatCivil,
-                ':telephone'      => $phone,
-                ':matricule'      => $matricule,
-                ':grade'          => $grade,
-                ':unite'          => $unite,
-                ':garnison'       => $garnison,
-                ':photo_url'      => $photoUrl
-            ]);
-        }
-
-        // Insertion des membres de la famille
-        $conjoint = $data['conjoint'] ?? null;
-        $defunt = $data['defunt'] ?? null;
-        $divorce = $data['divorce'] ?? null;
-        $enfants = $data['enfants'] ?? [];
-
-        $stmtFamily = $pdo->prepare("INSERT INTO family_members (
-            owner_user_id, nom, prenom, lien_parental, sexe, date_naissance, photo_url, created_at
-        ) VALUES (
-            :owner_user_id, :nom, :prenom, :lien_parental, :sexe, :date_naissance, :photo_url, NOW()
-        )");
-
-        if ($etatCivil === 'marie' && !empty($conjoint['conjointNom'])) {
-            $stmtFamily->execute([
-                ':owner_user_id' => $userId,
-                ':nom'           => safe_trim($conjoint['conjointNom']),
-                ':prenom'        => '',
-                ':lien_parental' => 'CONJOINT',
-                ':sexe'          => null,
-                ':date_naissance'=> isset($conjoint['conjointDateNais']) ? safe_trim($conjoint['conjointDateNais']) : null,
-                ':photo_url'     => null
-            ]);
-        }
-
-        if ($etatCivil === 'veuf' && !empty($defunt['defuntNom'])) {
-            $stmtFamily->execute([
-                ':owner_user_id' => $userId,
-                ':nom'           => safe_trim($defunt['defuntNom']),
-                ':prenom'        => '',
-                ':lien_parental' => 'DEFUNT',
-                ':sexe'          => null,
-                ':date_naissance'=> null,
-                ':photo_url'     => null
-            ]);
-        }
-
-        if ($etatCivil === 'divorce' && !empty($divorce['exConjointNom'])) {
-            $stmtFamily->execute([
-                ':owner_user_id' => $userId,
-                ':nom'           => safe_trim($divorce['exConjointNom']),
-                ':prenom'        => '',
-                ':lien_parental' => 'DIVORCE',
-                ':sexe'          => null,
-                ':date_naissance'=> null,
-                ':photo_url'     => null
-            ]);
-        }
-
-        if (!empty($enfants) && is_array($enfants)) {
-            foreach ($enfants as $enfant) {
-                $nomEnfant = safe_trim($enfant['nomComplet'] ?? '');
-                if (!empty($nomEnfant)) {
-                    $stmtFamily->execute([
-                        ':owner_user_id' => $userId,
-                        ':nom'           => $nomEnfant,
-                        ':prenom'        => '',
-                        ':lien_parental' => 'ENFANT',
-                        ':sexe'          => safe_trim($enfant['sexe'] ?? null),
-                        ':date_naissance'=> isset($enfant['dateNaissance']) ? safe_trim($enfant['dateNaissance']) : null,
-                        ':photo_url'     => safe_trim($enfant['photo'] ?? null)
-                    ]);
-                }
-            }
-        }
+    if (!$user && !empty($email)) {
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE LOWER(email) = :email LIMIT 1");
+        $stmt->execute([':email' => $email]);
+        $user = $stmt->fetch();
     }
 
-    // 3. Enregistrement de la transaction de paiement
+    if ($user) {
+        // L'utilisateur existe déjà, on récupère son ID officiel et on met à jour ses infos
+        $userId = $user['id'];
+        $stmtUpdateUser = $pdo->prepare("UPDATE users SET telephone = :telephone, type_profil = :type_profil WHERE id = :id");
+        $stmtUpdateUser.execute([
+            ':telephone'   => $phone,
+            ':type_profil' => $typeProfil,
+            ':id'          => $userId
+        ]);
+    } else {
+        // S'il n'existe vraiment nulle part, on le crée (cas rare)
+        $userId = generateUUID();
+        $baseName = !empty($nom) ? preg_replace('/[^a-zA-Z0-9]/', '', $nom) : 'user';
+        $prefixCode = ($typeProfil === 'MILITAIRE') ? 'mil' : 'civ';
+        $uniqueUsername = 'yo_' . $prefixCode . '_' . strtolower($baseName) . '_' . rand(100, 999);
+
+        $stmtNewUser = $pdo->prepare("INSERT INTO users (id, email, username, telephone, type_profil, statut_compte, email_verifie, created_at, updated_at) VALUES (:id, :email, :username, :telephone, :type_profil, 'EN_ATTENTE', 0, NOW(), NOW())");
+        $stmtNewUser->execute([
+            ':id'          => $userId,
+            ':email'       => $email,
+            ':username'    => $uniqueUsername,
+            ':telephone'   => $phone,
+            ':type_profil' => $typeProfil
+        ]);
+    }
+
+    // Enregistrement de la transaction de paiement
     $refOperateur = "PHYS-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
 
+    $sqlPayment = "INSERT INTO payments (
+                        id, user_id, montant, devise, methode_paiement, 
+                        reference_operateur, statut_paiement, created_at
+                    ) VALUES (
+                        id, :user_id, :montant, 'USD', 'MOBILE_MONEY', 
+                        :reference_operateur, 'EN_COURS', NOW()
+                    )";
+
+    // Correction mineure de syntaxe SQL pour l'ID du paiement :
     $sqlPayment = "INSERT INTO payments (
                         id, user_id, montant, devise, methode_paiement, 
                         reference_operateur, statut_paiement, created_at
@@ -293,15 +198,18 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // 4. Envoi de l'e-mail des modalités via Brevo
-    $emailSent = sendPhysicalPaymentEmail($email, $refOperateur);
+    // Envoi de l'e-mail des modalités via Brevo
+    if (!empty($email)) {
+        sendPhysicalPaymentEmail($email, $refOperateur);
+    }
 
     $pdo->commit();
 
     http_response_code(201);
     echo json_encode([
         "status"              => "success",
-        "message"             => "Instructions envoyées et profil enregistré avec succès.",
+        "message"             => "Instructions envoyées et paiement enregistré avec succès.",
+        "user_id"             => $userId,
         "payment_id"          => $paymentId,
         "reference_operateur" => $refOperateur,
         "email"               => $email
