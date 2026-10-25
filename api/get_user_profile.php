@@ -87,8 +87,8 @@ try {
         'grade'         => $profileData['grade'] ?? '',
         'unite'         => $profileData['unite'] ?? '',
         'garnison'      => $profileData['garnison'] ?? '',
-        'empla'       => $profileData['emplacement'] ?? '',
-        'tribu'       => $profileData['origineTribu'] ?? '',
+        'emplacement'       => $profileData['emplacement'] ?? '',
+        'origineTribu'       => $profileData['origineTribu'] ?? '',
 
         // Spécifiques Civil
         'profession'    => $profileData['profession'] ?? '',
