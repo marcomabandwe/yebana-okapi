@@ -27,11 +27,17 @@ $pdo = $database->getConnection();
 
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
+    // Si la date est déjà au format AAAA-MM-JJ
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateStr)) {
+        return $dateStr;
+    }
+    // Si la date est au format JJ/MM/AAAA
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
         $parts = explode('/', $dateStr);
         return "{$parts[2]}-{$parts[1]}-{$parts[0]}";
     }
-    return date('Y-m-d', strtotime($dateStr));
+    $time = strtotime($dateStr);
+    return $time ? date('Y-m-d', $time) : null;
 }
 
 function generateUUID() {
@@ -83,15 +89,18 @@ $lieuNaissance = trim($data['lieuNaissance'] ?? '');
 $profession = trim($data['profession'] ?? '');
 $photoUrl = $data['photo'] ?? $data['photo_url'] ?? null;
 
+$conjoint = $data['conjoint'] ?? null;
+$defunt = $data['defunt'] ?? null;
+$divorce = $data['divorce'] ?? null;
+$enfants = $data['enfants'] ?? [];
+
 try {
     $pdo->beginTransaction();
 
-    // 1. Gestion de l'utilisateur dans la table 'users'
+    // 1. Gestion de l'utilisateur dans la table 'users' (Évite les doublons si l'email existe)
     if (empty($userId)) {
         $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
-        $username = 'yo_civ_' . strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nom)) . '_' . rand(100, 999);
-
-        // Vérifier si l'email existe déjà
+        
         $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $checkStmt->execute([':email' => $userEmail]);
         $existingUser = $checkStmt->fetch();
@@ -100,6 +109,7 @@ try {
             $userId = $existingUser['id'];
         } else {
             $userId = generateUUID();
+            $username = 'yo_civ_' . strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nom)) . '_' . rand(100, 999);
             $defaultPasswordHash = password_hash('123456', PASSWORD_BCRYPT);
 
             $sqlUser = "INSERT INTO users (
@@ -119,20 +129,18 @@ try {
         }
     }
 
-    // 2. Vérifier si un profil civil existe déjà pour cet user_id pour éviter les doublons (Duplicate entry)
+    // 2. Insertion ou Mise à jour du profil dans 'profiles_civil'
     $checkProfile = $pdo->prepare("SELECT user_id FROM profiles_civil WHERE user_id = :user_id LIMIT 1");
     $checkProfile->execute([':user_id' => $userId]);
     $profileExists = $checkProfile->fetch();
 
     if ($profileExists) {
-        // Mise à jour si le profil existe déjà
         $sqlCivil = "UPDATE profiles_civil SET 
             nom = :nom, postnom = :postnom, prenom = :prenom, sexe = :sexe, 
             date_naissance = :date_naissance, lieu_naissance = :lieu_naissance, etat_civil = :etat_civil, 
             telephone = :telephone, profession = :profession, adresse_physique = :adresse_physique, photo_url = :photo_url 
             WHERE user_id = :user_id";
     } else {
-        // Insertion si le profil n'existe pas
         $sqlCivil = "INSERT INTO profiles_civil (
             user_id, nom, postnom, prenom, sexe, 
             date_naissance, lieu_naissance, etat_civil, 
@@ -160,23 +168,120 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
+    // 3. Nettoyer les anciens membres de la famille pour éviter les doublons en cas de modification
+    $stmtDeleteFamily = $pdo->prepare("DELETE FROM family_members WHERE owner_user_id = :user_id");
+    $stmtDeleteFamily->execute([':user_id' => $userId]);
+
+    // 4. Insertion des membres de la famille
+    $stmtFamily = $pdo->prepare("INSERT INTO family_members (
+        id, owner_user_id, nom, prenom, lien_parental, sexe, date_naissance, lieu_naissance, profession, date_deces, nom_cimetiere, date_divorce, photo_url, created_at
+    ) VALUES (
+        :id, :owner_user_id, :nom, :prenom, :lien_parental, :sexe, :date_naissance, :lieu_naissance, :profession, :date_deces, :nom_cimetiere, :date_divorce, :photo_url, NOW()
+    )");
+
+    // Conjoint
+    if ($etatCivil === 'MARIE' && !empty($conjoint['conjointNom'])) {
+        $stmtFamily->execute([
+            ':id'            => generateUUID(),
+            ':owner_user_id' => $userId,
+            ':nom'           => trim($conjoint['conjointNom']),
+            ':prenom'        => '',
+            ':lien_parental' => 'CONJOINT',
+            ':sexe'          => ($sexe === 'M') ? 'F' : 'M',
+            ':date_naissance'=> convertDateToMySQL($conjoint['conjointDateNais'] ?? null),
+            ':lieu_naissance'=> trim($conjoint['conjointLieuNais'] ?? ''),
+            ':profession'    => null,
+            ':date_deces'    => null,
+            ':nom_cimetiere' => null,
+            ':date_divorce'  => null,
+            ':photo_url'     => null
+        ]);
+    }
+
+    // Défunt
+    if ($etatCivil === 'VEUF' && !empty($defunt['defuntNom'])) {
+        $stmtFamily->execute([
+            ':id'            => generateUUID(),
+            ':owner_user_id' => $userId,
+            ':nom'           => trim($defunt['defuntNom']),
+            ':prenom'        => '',
+            ':lien_parental' => 'DEFUNT',
+            ':sexe'          => ($sexe === 'M') ? 'F' : 'M',
+            ':date_naissance'=> null,
+            ':lieu_naissance'=> null,
+            ':profession'    => null,
+            ':date_deces'    => convertDateToMySQL($defunt['defuntDateDeces'] ?? null),
+            ':nom_cimetiere' => trim($defunt['cimetiereNom'] ?? ''),
+            ':date_divorce'  => null,
+            ':photo_url'     => null
+        ]);
+    }
+
+    // Divorcé
+    if ($etatCivil === 'DIVORCE' && !empty($divorce['exConjointNom'])) {
+        $stmtFamily->execute([
+            ':id'            => generateUUID(),
+            ':owner_user_id' => $userId,
+            ':nom'           => trim($divorce['exConjointNom']),
+            ':prenom'        => '',
+            ':lien_parental' => 'DIVORCE',
+            ':sexe'          => ($sexe === 'M') ? 'F' : 'M',
+            ':date_naissance'=> null,
+            ':lieu_naissance'=> null,
+            ':profession'    => null,
+            ':date_deces'    => null,
+            ':nom_cimetiere' => null,
+            ':date_divorce'  => convertDateToMySQL($divorce['dateDivorce'] ?? null),
+            ':photo_url'     => null
+        ]);
+    }
+
+    // Enfants
+    if (!empty($enfants) && is_array($enfants)) {
+        foreach ($enfants as $enfant) {
+            $enfantNom = trim($enfant['nomComplet'] ?? '');
+            if (!empty($enfantNom)) {
+                $sexeEnfant = strtoupper(trim($enfant['sexe'] ?? 'M'));
+                if (!in_array($sexeEnfant, ['M', 'F'])) {
+                    $sexeEnfant = 'M';
+                }
+
+                $stmtFamily->execute([
+                    ':id'            => generateUUID(),
+                    ':owner_user_id' => $userId,
+                    ':nom'           => $enfantNom,
+                    ':prenom'        => '',
+                    ':lien_parental' => 'ENFANT',
+                    ':sexe'          => $sexeEnfant,
+                    ':date_naissance'=> convertDateToMySQL($enfant['dateNaissance'] ?? null),
+                    ':lieu_naissance'=> trim($enfant['lieuNaissance'] ?? ''),
+                    ':profession'    => trim($enfant['profession'] ?? ''),
+                    ':date_deces'    => null,
+                    ':nom_cimetiere' => null,
+                    ':date_divorce'  => null,
+                    ':photo_url'     => $enfant['photo'] ?? null
+                ]);
+            }
+        }
+    }
+
     $pdo->commit();
 
     http_response_code(201);
     echo json_encode([
         "status"   => "success",
-        "message"  => "Profil civil enregistré avec succès.",
+        "message"  => "Profil civil et famille enregistrés avec succès.",
         "user_id"  => $userId
     ]);
 
-} catch (PDOException $e) {
+} catch (Exception $e) {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
     http_response_code(500);
     echo json_encode([
         "status"  => "error",
-        "message" => "Erreur lors de l'enregistrement en BDD : " . $e->getMessage()
+        "message" => "Erreur SQL : " . $e->getMessage()
     ]);
 }
 ?>
