@@ -78,6 +78,8 @@ try {
         'dateNaissance' => $profileData['date_naissance'] ?? '',
         'lieuNaissance' => $profileData['lieu_naissance'] ?? '',
         'etatCivil'     => $profileData['etat_civil'] ?? '',
+        'empla'       => $profileData['emplacement'] ?? '',
+        'tribu'       => $profileData['origineTribu'] ?? '',
         'statut'        => $user['statut_compte'] ?? 'ACTIF',
         'dateEmission'  => date('d/m/Y', strtotime($profileData['created_at'] ?? 'now')),
         'photoUri'      => $profileData['photo_url'] ?? null,
