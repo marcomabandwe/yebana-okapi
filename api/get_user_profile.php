@@ -79,7 +79,7 @@ try {
         'username'        => $user['username'] ?? '',
         'email'           => $user['email'] ?? '',
         'telephone'       => $profileData['telephone'] ?? $user['telephone'] ?? '',
-        'type'            => $profileData['type'] ?? ($typeProfil === 'MILITAIRE' ? 'Militaire' : 'Civil'),
+        'type'            => $profileData['type'] ?? ($typeProfil === 'MILITAIRE' ? 'Militaire' : 'CIVIL'),
         'nom'             => $profileData['nom'] ?? '',
         'postnom'         => $profileData['postnom'] ?? '',
         'prenom'          => $profileData['prenom'] ?? '',
