@@ -6,6 +6,9 @@ header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -22,7 +25,6 @@ require_once __DIR__ . '/../Config/database.php';
 $database = new Database();
 $pdo = $database->getConnection();
 
-// Conversion de date vers MySQL (YYYY-MM-DD)
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
@@ -32,7 +34,6 @@ function convertDateToMySQL($dateStr) {
     return date('Y-m-d', strtotime($dateStr));
 }
 
-// Génération UUID v4
 function generateUUID() {
     return sprintf(
         '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
@@ -53,21 +54,20 @@ if (!$data) {
     exit();
 }
 
-// Champs obligatoires
 $nom = trim($data['nom'] ?? '');
 $postnom = trim($data['postnom'] ?? '');
 $prenom = trim($data['prenom'] ?? '');
 $sexe = strtoupper(trim($data['sexe'] ?? 'M'));
-$adresse = trim($data['emplacement'] ?? '');
+$adresse = trim($data['emplacement'] ?? $data['adressePhysique'] ?? '');
 $email = trim($data['email'] ?? '');
+$telephone = trim($data['telephone'] ?? '');
 
-if (empty($nom) || empty($prenom) || empty($sexe) || empty($adresse)) {
+if (empty($nom) || empty($prenom)) {
     http_response_code(422);
-    echo json_encode(["status" => "error", "message" => "Veuillez remplir les champs obligatoires (Nom, Prénom, Sexe, Emplacement)."]);
+    echo json_encode(["status" => "error", "message" => "Veuillez remplir les champs obligatoires (Nom, Prénom)."]);
     exit();
 }
 
-// Map état civil pour l'ENUM ('CELIBATAIRE','MARIE','DIVORCE','VEUF')
 $etatCivilInput = strtolower(trim($data['etatCivil'] ?? 'celibataire'));
 $etatCivilMap = [
     'celibataire' => 'CELIBATAIRE',
@@ -80,18 +80,18 @@ $etatCivil = $etatCivilMap[$etatCivilInput] ?? 'CELIBATAIRE';
 $userId = $data['user_id'] ?? null;
 $dateNaissance = convertDateToMySQL($data['dateNaissance'] ?? null);
 $lieuNaissance = trim($data['lieuNaissance'] ?? '');
-$telephone = trim($data['telephone'] ?? '');
 $profession = trim($data['profession'] ?? '');
-$photoUrl = $data['photo'] ?? null;
+$photoUrl = $data['photo'] ?? $data['photo_url'] ?? null;
 
 try {
     $pdo->beginTransaction();
 
-    // 1. Gestion de l'existence de l'utilisateur dans 'users'
+    // 1. Gestion de l'utilisateur dans la table 'users'
     if (empty($userId)) {
         $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
-        $username = strtolower($prenom . rand(100, 999));
+        $username = 'yo_civ_' . strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nom)) . '_' . rand(100, 999);
 
+        // Vérifier si l'email existe déjà
         $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
         $checkStmt->execute([':email' => $userEmail]);
         $existingUser = $checkStmt->fetch();
@@ -103,10 +103,10 @@ try {
             $defaultPasswordHash = password_hash('123456', PASSWORD_BCRYPT);
 
             $sqlUser = "INSERT INTO users (
-                            id, email, username, password_hash, type_profil, statut_compte, email_verifie, created_at, updated_at
-                        ) VALUES (
-                            :id, :email, :username, :password_hash, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW()
-                        )";
+                id, email, username, password_hash, telephone, type_profil, statut_compte, email_verifie, created_at, updated_at
+            ) VALUES (
+                :id, :email, :username, :password_hash, :telephone, 'CIVIL', 'ACTIF', 0, NOW(), NOW()
+            )";
             
             $stmtUser = $pdo->prepare($sqlUser);
             $stmtUser->execute([
@@ -114,20 +114,35 @@ try {
                 ':email'         => $userEmail,
                 ':username'      => $username,
                 ':password_hash' => $defaultPasswordHash,
+                ':telephone'     => $telephone,
             ]);
         }
     }
 
-    // 2. Insertion du profil principal dans 'profiles_civil'
-    $sqlCivil = "INSERT INTO profiles_civil (
-                    user_id, nom, postnom, prenom, sexe, 
-                    date_naissance, lieu_naissance, etat_civil, 
-                    telephone, profession, adresse_physique, photo_url, created_at
-                ) VALUES (
-                    :user_id, :nom, :postnom, :prenom, :sexe, 
-                    :date_naissance, :lieu_naissance, :etat_civil, 
-                    :telephone, :profession, :adresse_physique, :photo_url, NOW()
-                )";
+    // 2. Vérifier si un profil civil existe déjà pour cet user_id pour éviter les doublons (Duplicate entry)
+    $checkProfile = $pdo->prepare("SELECT user_id FROM profiles_civil WHERE user_id = :user_id LIMIT 1");
+    $checkProfile->execute([':user_id' => $userId]);
+    $profileExists = $checkProfile->fetch();
+
+    if ($profileExists) {
+        // Mise à jour si le profil existe déjà
+        $sqlCivil = "UPDATE profiles_civil SET 
+            nom = :nom, postnom = :postnom, prenom = :prenom, sexe = :sexe, 
+            date_naissance = :date_naissance, lieu_naissance = :lieu_naissance, etat_civil = :etat_civil, 
+            telephone = :telephone, profession = :profession, adresse_physique = :adresse_physique, photo_url = :photo_url 
+            WHERE user_id = :user_id";
+    } else {
+        // Insertion si le profil n'existe pas
+        $sqlCivil = "INSERT INTO profiles_civil (
+            user_id, nom, postnom, prenom, sexe, 
+            date_naissance, lieu_naissance, etat_civil, 
+            telephone, profession, adresse_physique, photo_url, created_at
+        ) VALUES (
+            :user_id, :nom, :postnom, :prenom, :sexe, 
+            :date_naissance, :lieu_naissance, :etat_civil, 
+            :telephone, :profession, :adresse_physique, :photo_url, NOW()
+        )";
+    }
 
     $stmtCivil = $pdo->prepare($sqlCivil);
     $stmtCivil->execute([
@@ -145,62 +160,12 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
-    // 3. Préparation pour l'insertion des membres de la famille
-    $sqlFamily = "INSERT INTO family_members (
-                    id, owner_user_id, nom, prenom, 
-                    lien_parental, sexe, date_naissance, photo_url, created_at
-                ) VALUES (
-                    :id, :owner_user_id, :nom, :prenom, 
-                    :lien_parental, :sexe, :date_naissance, :photo_url, NOW()
-                )";
-    $stmtFamily = $pdo->prepare($sqlFamily);
-
-    // Conjoint(e)
-    if ($etatCivil === 'MARIE' && !empty($data['conjoint']['conjointNom'])) {
-        $stmtFamily->execute([
-            ':id'             => generateUUID(),
-            ':owner_user_id'  => $userId,
-            ':nom'            => trim($data['conjoint']['conjointNom']),
-            ':prenom'         => '',
-            ':lien_parental'  => ($sexe === 'M') ? 'EPOUSE' : 'EPOUX',
-            ':sexe'           => ($sexe === 'M') ? 'F' : 'M',
-            ':date_naissance' => convertDateToMySQL($data['conjoint']['conjointDateNais'] ?? null),
-            ':photo_url'      => null,
-        ]);
-    }
-
-    // Enfants
-    if (!empty($data['enfants']) && is_array($data['enfants'])) {
-        foreach ($data['enfants'] as $enfant) {
-            $enfantNom = trim($enfant['nomComplet'] ?? '');
-            
-            // On vérifie que le nom complet n'est pas vide
-            if (!empty($enfantNom)) {
-                $sexeEnfant = strtoupper(trim($enfant['sexe'] ?? 'M'));
-                if (!in_array($sexeEnfant, ['M', 'F'])) {
-                    $sexeEnfant = 'M';
-                }
-
-                $stmtFamily->execute([
-                    ':id'             => generateUUID(),
-                    ':owner_user_id'  => $userId,
-                    ':nom'            => $enfantNom,
-                    ':prenom'         => '',
-                    ':lien_parental'  => 'ENFANT',
-                    ':sexe'           => $sexeEnfant,
-                    ':date_naissance' => convertDateToMySQL($enfant['dateNaissance'] ?? null),
-                    ':photo_url'      => $enfant['photo'] ?? null,
-                ]);
-            }
-        }
-    }
-
     $pdo->commit();
 
     http_response_code(201);
     echo json_encode([
         "status"   => "success",
-        "message"  => "Profil civil et membres de la famille enregistrés avec succès.",
+        "message"  => "Profil civil enregistré avec succès.",
         "user_id"  => $userId
     ]);
 
@@ -214,3 +179,4 @@ try {
         "message" => "Erreur lors de l'enregistrement en BDD : " . $e->getMessage()
     ]);
 }
+?>
