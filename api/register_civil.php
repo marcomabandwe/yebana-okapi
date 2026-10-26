@@ -27,11 +27,9 @@ $pdo = $database->getConnection();
 
 function convertDateToMySQL($dateStr) {
     if (empty($dateStr)) return null;
-    // Si la date est déjà au format AAAA-MM-JJ
     if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateStr)) {
         return $dateStr;
     }
-    // Si la date est au format JJ/MM/AAAA
     if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $dateStr)) {
         $parts = explode('/', $dateStr);
         return "{$parts[2]}-{$parts[1]}-{$parts[0]}";
@@ -65,7 +63,6 @@ $postnom = trim($data['postnom'] ?? '');
 $prenom = trim($data['prenom'] ?? '');
 $sexe = strtoupper(trim($data['sexe'] ?? 'M'));
 $adresse = trim($data['emplacement'] ?? $data['adressePhysique'] ?? '');
-$email = trim($data['email'] ?? '');
 $telephone = trim($data['telephone'] ?? '');
 
 if (empty($nom) || empty($prenom)) {
@@ -83,7 +80,8 @@ $etatCivilMap = [
 ];
 $etatCivil = $etatCivilMap[$etatCivilInput] ?? 'CELIBATAIRE';
 
-$userId = $data['user_id'] ?? null;
+// Récupération ou génération d'un UUID provisoire pour lier les tables
+$userId = !empty($data['user_id']) ? $data['user_id'] : generateUUID();
 $dateNaissance = convertDateToMySQL($data['dateNaissance'] ?? null);
 $lieuNaissance = trim($data['lieuNaissance'] ?? '');
 $profession = trim($data['profession'] ?? '');
@@ -97,44 +95,34 @@ $enfants = $data['enfants'] ?? [];
 try {
     $pdo->beginTransaction();
 
-    // 1. Gestion de l'utilisateur dans la table 'users' (Évite les doublons si l'email existe)
-    if (empty($userId)) {
-        $userEmail = !empty($email) ? $email : strtolower($prenom . '.' . $nom . rand(100, 999) . '@yebana.cd');
+    // 1. S'assurer qu'une entrée de base existe dans 'users' sans créer de faux e-mail aléatoire
+    $checkUser = $pdo->prepare("SELECT id FROM users WHERE id = :user_id LIMIT 1");
+    $checkUser->execute([':user_id' => $userId]);
+    
+    if (!$checkUser->fetch()) {
+        $username = 'yo_civ_' . strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nom)) . '_' . rand(100, 999);
+        $defaultPasswordHash = password_hash('123456', PASSWORD_BCRYPT);
+
+        $sqlUser = "INSERT INTO users (
+            id, email, username, password_hash, telephone, type_profil, statut_compte, email_verifie, created_at, updated_at
+        ) VALUES (
+            :id, NULL, :username, :password_hash, :telephone, 'CIVIL', 'EN_ATTENTE', 0, NOW(), NOW()
+        )";
         
-        $checkStmt = $pdo->prepare("SELECT id FROM users WHERE email = :email LIMIT 1");
-        $checkStmt->execute([':email' => $userEmail]);
-        $existingUser = $checkStmt->fetch();
-
-        if ($existingUser) {
-            $userId = $existingUser['id'];
-        } else {
-            $userId = generateUUID();
-            $username = 'yo_civ_' . strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $nom)) . '_' . rand(100, 999);
-            $defaultPasswordHash = password_hash('123456', PASSWORD_BCRYPT);
-
-            $sqlUser = "INSERT INTO users (
-                id, email, username, password_hash, telephone, type_profil, statut_compte, email_verifie, created_at, updated_at
-            ) VALUES (
-                :id, :email, :username, :password_hash, :telephone, 'CIVIL', 'ACTIF', 0, NOW(), NOW()
-            )";
-            
-            $stmtUser = $pdo->prepare($sqlUser);
-            $stmtUser->execute([
-                ':id'            => $userId,
-                ':email'         => $userEmail,
-                ':username'      => $username,
-                ':password_hash' => $defaultPasswordHash,
-                ':telephone'     => $telephone,
-            ]);
-        }
+        $stmtUser = $pdo->prepare($sqlUser);
+        $stmtUser->execute([
+            ':id'            => $userId,
+            ':username'      => $username,
+            ':password_hash' => $defaultPasswordHash,
+            ':telephone'     => $telephone,
+        ]);
     }
 
     // 2. Insertion ou Mise à jour du profil dans 'profiles_civil'
     $checkProfile = $pdo->prepare("SELECT user_id FROM profiles_civil WHERE user_id = :user_id LIMIT 1");
     $checkProfile->execute([':user_id' => $userId]);
-    $profileExists = $checkProfile->fetch();
-
-    if ($profileExists) {
+    
+    if ($checkProfile->fetch()) {
         $sqlCivil = "UPDATE profiles_civil SET 
             nom = :nom, postnom = :postnom, prenom = :prenom, sexe = :sexe, 
             date_naissance = :date_naissance, lieu_naissance = :lieu_naissance, etat_civil = :etat_civil, 
@@ -168,7 +156,7 @@ try {
         ':photo_url'        => $photoUrl,
     ]);
 
-    // 3. Nettoyer les anciens membres de la famille pour éviter les doublons en cas de modification
+    // 3. Nettoyer les anciens membres de la famille pour éviter les doublons
     $stmtDeleteFamily = $pdo->prepare("DELETE FROM family_members WHERE owner_user_id = :user_id");
     $stmtDeleteFamily->execute([':user_id' => $userId]);
 
