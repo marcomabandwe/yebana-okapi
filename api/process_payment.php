@@ -129,7 +129,6 @@ if (empty($email) && empty($userId)) {
 try {
     $pdo->beginTransaction();
 
-    // Recherche stricte de l'utilisateur existant par ID ou par Email pour NE JAMAIS créer de doublon
     $user = null;
     if (!empty($userId)) {
         $stmt = $pdo->prepare("SELECT id FROM users WHERE id = :id LIMIT 1");
@@ -144,16 +143,16 @@ try {
     }
 
     if ($user) {
-        // L'utilisateur existe déjà, on récupère son ID officiel et on met à jour ses infos
         $userId = $user['id'];
-        $stmtUpdateUser = $pdo->prepare("UPDATE users SET telephone = :telephone, type_profil = :type_profil WHERE id = :id");
-        $stmtUpdateUser.execute([
+        // CORRECTION DE LA SYNTAXE ICI (-> au lieu de .)
+        $stmtUpdateUser = $pdo->prepare("UPDATE users SET email = :email, telephone = :telephone, type_profil = :type_profil WHERE id = :id");
+        $stmtUpdateUser->execute([
+            ':email'       => $email,
             ':telephone'   => $phone,
             ':type_profil' => $typeProfil,
             ':id'          => $userId
         ]);
     } else {
-        // S'il n'existe vraiment nulle part, on le crée (cas rare)
         $userId = generateUUID();
         $baseName = !empty($nom) ? preg_replace('/[^a-zA-Z0-9]/', '', $nom) : 'user';
         $prefixCode = ($typeProfil === 'MILITAIRE') ? 'mil' : 'civ';
@@ -169,19 +168,9 @@ try {
         ]);
     }
 
-    // Enregistrement de la transaction de paiement
     $refOperateur = "PHYS-" . date("YmdHis") . "-" . rand(1000, 9999);
     $paymentId = generateUUID();
 
-    $sqlPayment = "INSERT INTO payments (
-                        id, user_id, montant, devise, methode_paiement, 
-                        reference_operateur, statut_paiement, created_at
-                    ) VALUES (
-                        id, :user_id, :montant, 'USD', 'MOBILE_MONEY', 
-                        :reference_operateur, 'EN_COURS', NOW()
-                    )";
-
-    // Correction mineure de syntaxe SQL pour l'ID du paiement :
     $sqlPayment = "INSERT INTO payments (
                         id, user_id, montant, devise, methode_paiement, 
                         reference_operateur, statut_paiement, created_at
@@ -198,7 +187,6 @@ try {
         ':reference_operateur' => $refOperateur,
     ]);
 
-    // Envoi de l'e-mail des modalités via Brevo
     if (!empty($email)) {
         sendPhysicalPaymentEmail($email, $refOperateur);
     }
