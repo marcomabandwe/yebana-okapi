@@ -24,7 +24,7 @@ try {
         exit();
     }
 
-    // 1. Récupérer les informations de l'utilisateur (cherche dans users et les profils)
+    // 1. Récupérer les informations de l'utilisateur
     $stmtUser = $pdo->prepare("
         SELECT u.id, u.email, u.username, 
                COALESCE(pc.nom, pm.nom) as nom, 
@@ -38,19 +38,16 @@ try {
     $userData = $stmtUser->fetch(PDO::FETCH_ASSOC);
 
     if (!$userData) {
-        echo json_encode(["status" => "error", "message" => "Utilisateur introuvable avec l'ID : " . $userId]);
+        echo json_encode(["status" => "error", "message" => "Utilisateur introuvable."]);
         exit();
     }
 
-    // 2. Mettre à jour le statut dans la table users (on teste 'statut_compte' ou 'statut')
-    try {
-        $stmtUpdate = $pdo->prepare("UPDATE users SET statut_compte = :statut WHERE id = :id");
-        $stmtUpdate->execute([':statut' => $nouveauStatut, ':id' => $userId]);
-    } catch (PDOException $ex) {
-        // Fallback si la colonne s'appelle simplement 'statut'
-        $stmtUpdate = $pdo->prepare("UPDATE users SET statut = :statut WHERE id = :id");
-        $stmtUpdate->execute([':statut' => $nouveauStatut, ':id' => $userId]);
-    }
+    // 2. Mettre à jour le statut dans la colonne exacte 'statut_compte' de la table users
+    $stmtUpdate = $pdo->prepare("UPDATE users SET statut_compte = :statut WHERE id = :id");
+    $stmtUpdate->execute([
+        ':statut' => $nouveauStatut,
+        ':id' => $userId
+    ]);
 
     // 3. Envoi du reçu par e-mail via Brevo (si la clé API est configurée)
     $emailSent = false;
