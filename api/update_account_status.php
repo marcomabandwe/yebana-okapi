@@ -10,37 +10,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
+require_once __DIR__ . '/../Config/database.php';
+$database = new Database();
+$pdo = $database->getConnection();
+
+$inputData = json_decode(file_get_contents("php://input"), true);
+$userId = $inputData['user_id'] ?? '';
+$nouveauStatut = strtoupper($inputData['statut'] ?? 'OK');
+
+if (empty($userId)) {
+    echo json_encode(["status" => "error", "message" => "ID utilisateur manquant."]);
+    exit();
+}
+
 try {
-    require_once __DIR__ . '/../Config/database.php';
-    $database = new Database();
-    $pdo = $database->getConnection();
-
-    $inputData = json_decode(file_get_contents("php://input"), true);
-    $userId = $inputData['user_id'] ?? '';
-    $nouveauStatut = strtoupper($inputData['statut'] ?? 'OK');
-
-    if (empty($userId)) {
-        echo json_encode(["status" => "error", "message" => "ID utilisateur manquant."]);
-        exit();
-    }
-
-    // Mise à jour directe du statut du compte
-    $stmtUpdate = $pdo->prepare("UPDATE users SET statut_compte = :statut, updated_at = NOW() WHERE id = :id");
-    $stmtUpdate->execute([
+    $stmt = $pdo->prepare("UPDATE users SET statut_compte = :statut, updated_at = NOW() WHERE id = :id");
+    $stmt->execute([
         ':statut' => $nouveauStatut,
         ':id' => $userId
     ]);
 
     echo json_encode([
         "status" => "success",
-        "message" => "Compte rendu opérationnel (OK) avec succès."
+        "message" => "Le statut du compte a été mis à jour avec succès ($nouveauStatut)."
     ]);
 
-} catch (Exception $e) {
+} catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode([
-        "status" => "error",
-        "message" => "Erreur serveur : " . $e->getMessage()
-    ]);
+    echo json_encode(["status" => "error", "message" => $e->getMessage()]);
 }
 ?>
