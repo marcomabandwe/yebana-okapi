@@ -35,10 +35,12 @@ try {
         LEFT JOIN family_members fm ON u.id = fm.owner_user_id
         WHERE u.username LIKE :q 
            OR u.email LIKE :q 
+           OR u.telephone LIKE :q
            OR pc.nom LIKE :q OR pm.nom LIKE :q
            OR pc.postnom LIKE :q OR pm.postnom LIKE :q
            OR pc.prenom LIKE :q OR pm.prenom LIKE :q
            OR fm.nom LIKE :q
+           OR fm.prenom LIKE :q
     ";
 
     $stmt = $pdo->prepare($sql);
