@@ -15,6 +15,9 @@ try {
     $database = new Database();
     $pdo = $database->getConnection();
 
+    // Désactiver le mode strict pour éviter les blocages sur les avertissements de troncature
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_WARNING);
+
     $inputData = json_decode(file_get_contents("php://input"), true);
     $userId = $inputData['user_id'] ?? '';
     $nouveauStatut = strtoupper($inputData['statut'] ?? 'OK');
@@ -42,14 +45,14 @@ try {
         exit();
     }
 
-    // 2. Mettre à jour le statut dans la colonne exacte 'statut_compte' de la table users
+    // 2. Mettre à jour le statut dans la colonne 'statut_compte'
     $stmtUpdate = $pdo->prepare("UPDATE users SET statut_compte = :statut WHERE id = :id");
     $stmtUpdate->execute([
         ':statut' => $nouveauStatut,
         ':id' => $userId
     ]);
 
-    // 3. Envoi du reçu par e-mail via Brevo (si la clé API est configurée)
+    // 3. Envoi du reçu par e-mail via Brevo (si configuré)
     $emailSent = false;
     $brevoApiKey = getenv('BREVO_API_KEY');
 
@@ -103,6 +106,9 @@ try {
 
         $emailSent = ($httpCode === 200 || $httpCode === 201);
     }
+
+    // Réinitialiser le mode d'erreur en Exception pour les retours propres
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     echo json_encode([
         "status" => "success",
