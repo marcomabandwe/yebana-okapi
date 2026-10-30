@@ -1,10 +1,13 @@
 <?php
 // api/update_account_status.php
+
+// 1. En-têtes CORS obligatoires pour le Web
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
 header("Content-Type: application/json; charset=UTF-8");
 
+// 2. Si c'est une requête de vérification CORS (OPTIONS), on s'arrête net ici avec un code 200
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -15,9 +18,6 @@ try {
     $database = new Database();
     $pdo = $database->getConnection();
 
-    // Désactiver le mode strict pour éviter les blocages sur les avertissements de troncature
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_WARNING);
-
     $inputData = json_decode(file_get_contents("php://input"), true);
     $userId = $inputData['user_id'] ?? '';
     $nouveauStatut = strtoupper($inputData['statut'] ?? 'OK');
@@ -27,7 +27,7 @@ try {
         exit();
     }
 
-    // 1. Récupérer les informations de l'utilisateur
+    // Récupérer les informations de l'utilisateur
     $stmtUser = $pdo->prepare("
         SELECT u.id, u.email, u.username, 
                COALESCE(pc.nom, pm.nom) as nom, 
@@ -45,14 +45,14 @@ try {
         exit();
     }
 
-    // 2. Mettre à jour le statut dans la colonne 'statut_compte'
+    // Mettre à jour le statut dans la base de données
     $stmtUpdate = $pdo->prepare("UPDATE users SET statut_compte = :statut WHERE id = :id");
     $stmtUpdate->execute([
         ':statut' => $nouveauStatut,
         ':id' => $userId
     ]);
 
-    // 3. Envoi du reçu par e-mail via Brevo (si configuré)
+    // Envoi du reçu par e-mail via Brevo (si configuré)
     $emailSent = false;
     $brevoApiKey = getenv('BREVO_API_KEY');
 
@@ -106,9 +106,6 @@ try {
 
         $emailSent = ($httpCode === 200 || $httpCode === 201);
     }
-
-    // Réinitialiser le mode d'erreur en Exception pour les retours propres
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     echo json_encode([
         "status" => "success",
