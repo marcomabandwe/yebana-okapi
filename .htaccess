@@ -1,5 +1,4 @@
 RewriteEngine On
 
-# Si c'est une requête OPTIONS (Preflight CORS), on répond 200 immédiatement
-RewriteCond %{REQUEST_METHOD} OPTIONS
-RewriteRule ^(.*)$ $1 [R=200,L]
+# Ne pas intercepter les requêtes OPTIONS.
+# Les fichiers PHP gèrent eux-mêmes les réponses CORS.
