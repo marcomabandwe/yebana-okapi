@@ -1,4 +1,31 @@
 <?php
+
+<?php
+$allowedOrigins = [
+    'http://localhost:8081',
+    'http://localhost:19006',
+    // Ajouter ici l'adresse Netlify après publication
+    // 'https://yebana-okapi.netlify.app',
+];
+
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
+if (in_array($origin, $allowedOrigins, true)) {
+    header("Access-Control-Allow-Origin: $origin");
+    header('Vary: Origin');
+}
+
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, Accept');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+header('Content-Type: application/json; charset=utf-8');
+
+
 header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../Config/database.php';
 try { $pdo = (new Database())->getConnection();
