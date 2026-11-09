@@ -1,6 +1,6 @@
 <?php
 
-<?php
+require_once __DIR__ . '/cors.php';
 $allowedOrigins = [
     'http://localhost:8081',
     'http://localhost:19006',
