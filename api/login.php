@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/cors.php';
 // api/login.php
 
 // 1. Force l'affichage des erreurs PHP pour le diagnostic
