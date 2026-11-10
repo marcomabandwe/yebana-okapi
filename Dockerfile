@@ -1,39 +1,18 @@
-
 FROM php:8.2-apache
 
-# Installer les extensions PHP necessaires
+# Extensions PHP pour MySQL
 RUN docker-php-ext-install pdo pdo_mysql mysqli
 
-# Activer les modules Apache
+# Modules Apache
 RUN a2enmod rewrite headers
 
-# Copier le backend dans Apache
+# Copier les fichiers du backend
 COPY . /var/www/html/
 
-# Supprimer les BOM UTF-8 et les lignes vides
-# avant l'ouverture PHP dans les fichiers concernes
-RUN python3 - <<'PY'
-from pathlib import Path
+# Supprimer les BOM et les espaces avant <?php
+RUN python3 -c "from pathlib import Path; root=Path('/var/www/html'); files=list(root.rglob('*.php')); [(p.write_bytes(c.lstrip(b' \t\r\n')) if c.lstrip(b' \t\r\n').startswith(b'<?php') and c.lstrip(b' \t\r\n') != c else None) for p in files for c in [p.read_bytes().removeprefix(bytes.fromhex('efbbbf'))]]"
 
-root = Path('/var/www/html')
-
-for path in root.rglob('*.php'):
-    content = path.read_bytes()
-
-    cleaned = content
-
-    if cleaned.startswith(b'\xef\xbb\xbf'):
-        cleaned = cleaned[3:]
-
-    if cleaned.lstrip(b' \t\r\n').startswith(b'<?php'):
-        cleaned = cleaned.lstrip(b' \t\r\n')
-
-    if cleaned != content:
-        path.write_bytes(cleaned)
-        print('Fichier corrige:', path)
-PY
-
-# Configurer Apache pour les requetes CORS
+# Configurer CORS dans Apache
 RUN printf '%s\n' \
     '<IfModule mod_headers.c>' \
     '    SetEnvIfNoCase Origin "^https?://localhost:(8081|19006)$" CORS_ORIGIN=$0' \
@@ -44,15 +23,15 @@ RUN printf '%s\n' \
     '</IfModule>' \
     > /etc/apache2/conf-available/yebana-cors.conf
 
-# Activer la configuration Apache
 RUN a2enconf yebana-cors
 
-# Eviter les avertissements de nom du serveur
+# Configurer le nom du serveur
 RUN echo "ServerName localhost" \
-    > /etc/apache2/conf-available/servername.conf \
-    && a2enconf servername
+    > /etc/apache2/conf-available/servername.conf
 
-# Verifier les premiers octets du fichier
+RUN a2enconf servername
+
+# Verifier les premiers octets
 RUN od -An -tx1 -N16 /var/www/html/api/public_stats.php
 
 EXPOSE 80
