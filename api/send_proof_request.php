@@ -1,7 +1,7 @@
 <?php
 // api/send_proof_request.php
 header("Content-Type: application/json; charset=UTF-8");
-
+header("Access-Control-Allow-Origin: *");
 $inputData = json_decode(file_get_contents("php://input"), true);
 $toEmail = $inputData['email'] ?? '';
 $username = $inputData['username'] ?? 'Utilisateur';
