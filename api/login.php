@@ -1,88 +1,165 @@
 <?php
-// api/login.php
+// API de connexion YEBANA-OKAPI
+// Compatible Android et Web
 
-// 1. Force l'affichage des erreurs PHP pour le diagnostic
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
 error_reporting(E_ALL);
 
-// 2. En-têtes CORS
-header("Access-Control-Allow-Origin: *");
-header("Content-Type: application/json; charset=UTF-8");
-header("Access-Control-Allow-Methods: POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+// CORS est gere par Apache dans le Dockerfile
+header('Content-Type: application/json; charset=utf-8');
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
+// Reponse JSON
+function sendResponse($statusCode, $data)
+{
+    http_response_code($statusCode);
+
+    echo json_encode(
+        $data,
+        JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    exit;
 }
 
-// 3. Inclusion de la base de données
-require_once __DIR__ . '/../Config/database.php';
+// Gestion des requetes OPTIONS
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+// Autoriser uniquement POST
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    sendResponse(405, [
+        'status' => 'error',
+        'message' => 'Methode non autorisee.'
+    ]);
+}
 
 try {
+    require_once __DIR__ . '/../Config/database.php';
+
+    // Lire les donnees JSON
+    $rawInput = file_get_contents('php://input');
+    $data = json_decode($rawInput, true);
+
+    if (!is_array($data)) {
+        sendResponse(400, [
+            'status' => 'error',
+            'message' => 'Donnees JSON invalides.'
+        ]);
+    }
+
+    $login = trim((string) ($data['login'] ?? ''));
+    $password = (string) ($data['password'] ?? '');
+
+    if ($login === '' || $password === '') {
+        sendResponse(400, [
+            'status' => 'error',
+            'message' => 'Veuillez saisir votre identifiant et votre mot de passe.'
+        ]);
+    }
+
+    // Connexion MySQL
     $database = new Database();
     $db = $database->getConnection();
 
-    $raw_input = file_get_contents("php://input");
-    $data = json_decode($raw_input);
-
-    if (!empty($data->login) && !empty($data->password)) {
-        
-        $query = "SELECT id, email, username, password_hash, type_profil, statut_compte FROM users 
-                  WHERE username = :login OR email = :login LIMIT 0,1";
-        
-        $stmt = $db->prepare($query);
-        $stmt->bindParam(':login', $data->login);
-        $stmt->execute();
-
-        if ($stmt->rowCount() > 0) {
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (password_verify($data->password, $row['password_hash'])) {
-                
-                $profile = null;
-                if ($row['type_profil'] === 'CIVIL') {
-                    $q = "SELECT * FROM profiles_civil WHERE user_id = :uid";
-                } else {
-                    $q = "SELECT * FROM profiles_militaire WHERE user_id = :uid";
-                }
-                
-                $stmtProf = $db->prepare($q);
-                $stmtProf->bindParam(':uid', $row['id']);
-                $stmtProf->execute();
-                $profile = $stmtProf->fetch(PDO::FETCH_ASSOC);
-
-                http_response_code(200);
-                echo json_encode([
-                    "status" => "success",
-                    "user" => [
-                        "id" => $row['id'],
-                        "email" => $row['email'],
-                        "username" => $row['username'],
-                        "typeProfil" => $row['type_profil'],
-                        "statutCompte" => $row['statut_compte'],
-                        "profileDetails" => $profile
-                    ]
-                ]);
-            } else {
-                http_response_code(401);
-                echo json_encode(["status" => "error", "message" => "Mot de passe incorrect."]);
-            }
-        } else {
-            http_response_code(404);
-            echo json_encode(["status" => "error", "message" => "Utilisateur non trouvé."]);
-        }
-    } else {
-        http_response_code(400);
-        echo json_encode(["status" => "error", "message" => "Données incomplètes."]);
+    if (!$db instanceof PDO) {
+        throw new RuntimeException(
+            'Connexion a la base de donnees indisponible.'
+        );
     }
+
+    // Rechercher l'utilisateur
+    $query = "
+        SELECT
+            id,
+            email,
+            username,
+            password_hash,
+            type_profil,
+            statut_compte
+        FROM users
+        WHERE username = :username
+           OR email = :email
+        LIMIT 1
+    ";
+
+    $stmt = $db->prepare($query);
+
+    $stmt->execute([
+        ':username' => $login,
+        ':email' => $login
+    ]);
+
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // Verification de l'identifiant et du mot de passe
+    if (
+        !$user ||
+        !password_verify($password, $user['password_hash'])
+    ) {
+        sendResponse(401, [
+            'status' => 'error',
+            'message' => 'Identifiant ou mot de passe incorrect.'
+        ]);
+    }
+
+    // Recuperer le profil
+    $profile = null;
+
+    if ($user['type_profil'] === 'CIVIL') {
+        $profileTable = 'profiles_civil';
+    } elseif ($user['type_profil'] === 'MILITAIRE') {
+        $profileTable = 'profiles_militaire';
+    } else {
+        $profileTable = null;
+    }
+
+    if ($profileTable !== null) {
+        $profileQuery = "
+            SELECT *
+            FROM {$profileTable}
+            WHERE user_id = :user_id
+            LIMIT 1
+        ";
+
+        $profileStmt = $db->prepare($profileQuery);
+
+        $profileStmt->execute([
+            ':user_id' => $user['id']
+        ]);
+
+        $profile = $profileStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($profile === false) {
+            $profile = null;
+        }
+    }
+
+    // Reponse de connexion reussie
+    sendResponse(200, [
+        'status' => 'success',
+        'message' => 'Connexion reussie.',
+        'user_id' => $user['id'],
+        'user' => [
+            'id' => $user['id'],
+            'email' => $user['email'],
+            'username' => $user['username'],
+            'typeProfil' => $user['type_profil'],
+            'statutCompte' => $user['statut_compte'],
+            'profileDetails' => $profile
+        ]
+    ]);
+
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo json_encode([
-        "status" => "error", 
-        "message" => "Erreur critique PHP : " . $e->getMessage(),
-        "file" => $e->getFile(),
-        "line" => $e->getLine()
+
+    // Enregistrer les details dans les logs Render
+    error_log('Erreur login YEBANA-OKAPI : ' . $e->getMessage());
+
+    // Ne pas exposer les details techniques aux utilisateurs
+    sendResponse(500, [
+        'status' => 'error',
+        'message' => 'Erreur interne du serveur. Veuillez reessayer.'
     ]);
 }
