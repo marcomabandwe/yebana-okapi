@@ -1,18 +1,19 @@
 FROM php:8.2-apache
 
-# Extensions PHP pour MySQL
+# Installer les extensions MySQL
 RUN docker-php-ext-install pdo pdo_mysql mysqli
 
-# Modules Apache
+# Activer les modules Apache
 RUN a2enmod rewrite headers
 
-# Copier les fichiers du backend
+# Copier le backend
 COPY . /var/www/html/
 
-# Supprimer les BOM et les espaces avant <?php
-RUN python3 -c "from pathlib import Path; root=Path('/var/www/html'); files=list(root.rglob('*.php')); [(p.write_bytes(c.lstrip(b' \t\r\n')) if c.lstrip(b' \t\r\n').startswith(b'<?php') and c.lstrip(b' \t\r\n') != c else None) for p in files for c in [p.read_bytes().removeprefix(bytes.fromhex('efbbbf'))]]"
+# Supprimer les BOM UTF-8 et les espaces
+# avant l'ouverture PHP
+RUN php -r '$dir = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("/var/www/html")); foreach ($dir as $file) { if (!$file->isFile() || strtolower($file->getExtension()) !== "php") continue; $path = $file->getPathname(); $content = file_get_contents($path); $clean = preg_replace("/^\xEF\xBB\xBF/", "", $content); if (preg_match("/^\s*<\?php/", $clean)) { $clean = ltrim($clean); } if ($clean !== $content) { file_put_contents($path, $clean); echo "Corrige: $path\n"; } }'
 
-# Configurer CORS dans Apache
+# Configurer CORS pour le Web local
 RUN printf '%s\n' \
     '<IfModule mod_headers.c>' \
     '    SetEnvIfNoCase Origin "^https?://localhost:(8081|19006)$" CORS_ORIGIN=$0' \
@@ -25,13 +26,13 @@ RUN printf '%s\n' \
 
 RUN a2enconf yebana-cors
 
-# Configurer le nom du serveur
-RUN echo "ServerName localhost" \
+# Definir le nom du serveur Apache
+RUN printf '%s\n' 'ServerName localhost' \
     > /etc/apache2/conf-available/servername.conf
 
 RUN a2enconf servername
 
-# Verifier les premiers octets
+# Verifier les premiers octets du fichier PHP
 RUN od -An -tx1 -N16 /var/www/html/api/public_stats.php
 
 EXPOSE 80
