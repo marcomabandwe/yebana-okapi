@@ -7,3 +7,4 @@ $sql="SELECT DISTINCT u.id,u.type_profil, CONCAT_WS(' ',COALESCE(pc.nom,pm.nom),
 $st=$pdo->prepare($sql); $st->execute(array_combine(array_map(fn($x)=>':'.$x,range('a','k')),array_fill(0,11,$term)));
 echo json_encode(['status'=>'success','results'=>$st->fetchAll(PDO::FETCH_ASSOC)]);
 } catch(Throwable $e) {http_response_code(500);echo json_encode(['status'=>'error','message'=>'Recherche indisponible']);}
+?>
