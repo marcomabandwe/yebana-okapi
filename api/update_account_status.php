@@ -2,9 +2,7 @@
 // api/update_account_status.php
 
 // 1. En-têtes CORS obligatoires pour le Web
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+
 header("Content-Type: application/json; charset=UTF-8");
 
 // 2. Si c'est une requête de vérification CORS (OPTIONS), on s'arrête net ici avec un code 200
