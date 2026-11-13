@@ -1,7 +1,11 @@
 <?php
 // api/register_militaire.php
 
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
 header("Content-Type: application/json; charset=UTF-8");
+
 
 // Désactiver l'affichage direct des erreurs HTML pour protéger le format JSON
 ini_set('display_errors', 0);
