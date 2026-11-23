@@ -1,82 +1,194 @@
 <?php
-require_once __DIR__ . '/../Config/database.php';
+/**
+ * YEBANA-OKAPI
+ * API : public_identity.php
+ *
+ * Recherche d'une identité par UUID ou username.
+ * Compatible avec MySQL Aiven et le frontend Expo.
+ */
+
 require_once __DIR__ . '/cors.php';
 
 header('Content-Type: application/json; charset=UTF-8');
 
+require_once __DIR__ . '/../Config/database.php';
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
+/**
+ * Envoyer une réponse JSON et arrêter l'exécution.
+ */
+function respond($httpCode, $data)
+{
+    http_response_code($httpCode);
+
+    echo json_encode(
+        $data,
+        JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
     exit;
 }
 
-function respond($code, $data) {
-    http_response_code($code);
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
-    exit;
-}
+// Autoriser uniquement GET.
+if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+    header('Allow: GET, OPTIONS');
 
-$id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-$username = trim($_GET['username'] ?? '');
-
-if (!$id && ($username === '' || strlen($username) > 100)) {
-    respond(400, [
+    respond(405, [
         'status' => 'error',
-        'message' => 'Identifiant invalide.'
+        'message' => 'Méthode non autorisée.'
     ]);
 }
 
-try {
-    $pdo = (new Database())->getConnection();
+// =====================================================
+// 1. RÉCUPÉRATION DES PARAMÈTRES
+// =====================================================
 
-    // Recherche de l'identité dans les tables existantes.
-    // Le nom de colonne username doit correspondre à users.
+$id = trim((string) ($_GET['id'] ?? ''));
+$username = trim((string) ($_GET['username'] ?? ''));
+
+$where = '';
+$value = '';
+
+// Recherche prioritaire par UUID.
+if ($id !== '') {
+
+    $uuidPattern =
+        '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i';
+
+    if (!preg_match($uuidPattern, $id)) {
+        respond(400, [
+            'status' => 'error',
+            'message' => 'Identifiant UUID invalide.'
+        ]);
+    }
+
+    $where = 'u.id = :value';
+    $value = $id;
+
+} elseif ($username !== '') {
+
+    if (mb_strlen($username) > 100) {
+        respond(400, [
+            'status' => 'error',
+            'message' => 'Nom d’utilisateur trop long.'
+        ]);
+    }
+
+    $where = 'u.username = :value';
+    $value = $username;
+
+} else {
+
+    respond(400, [
+        'status' => 'error',
+        'message' => 'Identifiant manquant.'
+    ]);
+}
+
+// =====================================================
+// 2. CONNEXION À AIVEN
+// =====================================================
+
+try {
+
+    $database = new Database();
+    $pdo = $database->getConnection();
+
+    if (!$pdo) {
+        throw new RuntimeException(
+            'Connexion à la base indisponible.'
+        );
+    }
+
+    // =================================================
+    // 3. RECHERCHE DU TITULAIRE
+    // =================================================
+
     $sql = "
         SELECT
             u.id,
+            u.username,
             u.type_profil,
-            CONCAT_WS(' ',
+
+            CONCAT_WS(
+                ' ',
                 COALESCE(pc.nom, pm.nom),
                 COALESCE(pc.postnom, pm.postnom),
                 COALESCE(pc.prenom, pm.prenom)
             ) AS nom_complet
+
         FROM users u
-        LEFT JOIN profiles_civil pc ON pc.user_id = u.id
-        LEFT JOIN profiles_militaire pm ON pm.user_id = u.id
-        WHERE " . ($id ? "u.id = :value" : "u.username = :value") . "
+
+        LEFT JOIN profiles_civil pc
+            ON pc.user_id = u.id
+
+        LEFT JOIN profiles_militaire pm
+            ON pm.user_id = u.id
+
+        WHERE {$where}
+
         LIMIT 1
     ";
 
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([':value' => $id ?: $username]);
+
+    $stmt->execute([
+        ':value' => $value
+    ]);
+
     $person = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$person) {
+
         respond(404, [
             'status' => 'error',
-            'message' => 'Titulaire introuvable.'
+            'message' => 'Aucun titulaire trouvé.'
         ]);
     }
 
-    // Informations publiques minimales.
-    // Les données privées nécessitent une autorisation
-    // de publication contrôlée côté serveur.
-    $person['photo_url'] = null;
-    $person['telephone'] = null;
-    $person['adresse_physique'] = null;
-    $person['emplacement'] = null;
-    $person['family_members'] = [];
+    // =================================================
+    // 4. PRÉPARATION DE LA FICHE PUBLIQUE
+    // =================================================
+
+    $typeProfil = strtoupper(
+        trim((string) ($person['type_profil'] ?? ''))
+    );
+
+    $identity = [
+        'id' => $person['id'],
+        'username' => $person['username'],
+        'type_profil' => $typeProfil,
+        'nom_complet' => trim(
+            (string) ($person['nom_complet'] ?? '')
+        ),
+
+        // Champs réservés à une publication autorisée.
+        'photo_url' => null,
+        'telephone' => null,
+        'adresse_physique' => null,
+        'emplacement' => null,
+        'family_members' => []
+    ];
+
+    // =================================================
+    // 5. RÉPONSE JSON
+    // =================================================
 
     respond(200, [
         'status' => 'success',
-        'person' => $person
+        'person' => $identity
     ]);
 
 } catch (Throwable $e) {
-    error_log('public_identity: ' . $e->getMessage());
+
+    // Enregistrer les détails uniquement côté serveur.
+    error_log(
+        'YEBANA-OKAPI public_identity.php : ' .
+        $e->getMessage()
+    );
 
     respond(500, [
         'status' => 'error',
-        'message' => 'Impossible de charger cette identité.'
+        'message' =>
+            'Impossible de récupérer la fiche d’identification.'
     ]);
 }
