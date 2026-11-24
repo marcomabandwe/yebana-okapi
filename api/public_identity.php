@@ -1,37 +1,21 @@
+
 <?php
 
 require_once __DIR__ . '/cors.php';
-
-header('Content-Type: application/json; charset=UTF-8');
-
 require_once __DIR__ . '/../Config/database.php';
 
-// =====================================================
-// CONFIGURATION
-// =====================================================
-
-define('DEMO_MODE', false);
-
-// =====================================================
-// RÉPONSE JSON
-// =====================================================
+header('Content-Type: application/json; charset=UTF-8');
 
 function respond($code, $data)
 {
     http_response_code($code);
-
     echo json_encode(
         $data,
         JSON_UNESCAPED_UNICODE |
         JSON_INVALID_UTF8_SUBSTITUTE
     );
-
     exit;
 }
-
-// =====================================================
-// MÉTHODE HTTP
-// =====================================================
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     respond(405, [
@@ -40,63 +24,24 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     ]);
 }
 
-// =====================================================
-// FICHE DE DÉMONSTRATION
-// =====================================================
-
-if (DEMO_MODE) {
-    respond(200, [
-        'status' => 'success',
-        'person' => [
-            'id' => 'demo',
-            'username' => 'demo',
-            'type_profil' => 'CIVIL',
-            'nom_complet' => 'TITULAIRE DE DEMONSTRATION',
-            'photo_url' => null,
-            'telephone' => '0000000000',
-            'adresse_physique' => 'Adresse fictive',
-            'emplacement' => null,
-            'family_members' => [
-                [
-                    'id' => 'demo-1',
-                    'nom_complet' => 'MEMBRE FICTIF 1',
-                    'lien_parental' => 'Frère',
-                    'photo_url' => null
-                ],
-                [
-                    'id' => 'demo-2',
-                    'nom_complet' => 'MEMBRE FICTIF 2',
-                    'lien_parental' => 'Sœur',
-                    'photo_url' => null
-                ]
-            ]
-        ]
-    ]);
-}
-
-// =====================================================
-// IDENTIFIANT DU TITULAIRE
-// =====================================================
-
 $id = trim((string) ($_GET['id'] ?? ''));
 $username = trim((string) ($_GET['username'] ?? ''));
 
 if ($id !== '') {
-
-    $uuidPattern =
-        '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i';
-
-    if (!preg_match($uuidPattern, $id)) {
+    if (!preg_match(
+        '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i',
+        $id
+    )) {
         respond(400, [
             'status' => 'error',
-            'message' => 'Identifiant UUID invalide.'
+            'message' => 'UUID invalide.'
         ]);
     }
 
     $where = 'u.id = :value';
     $value = $id;
 
-} elseif ($username !== '' && strlen($username) <= 100) {
+} elseif ($username !== '' && strlen($username) <= 50) {
 
     $where = 'u.username = :value';
     $value = $username;
@@ -105,32 +50,17 @@ if ($id !== '') {
 
     respond(400, [
         'status' => 'error',
-        'message' => 'Identifiant manquant ou invalide.'
+        'message' => 'Identifiant manquant.'
     ]);
 }
-
-// =====================================================
-// CONNEXION À AIVEN
-// =====================================================
 
 try {
 
     $pdo = (new Database())->getConnection();
 
-    if (!$pdo) {
-        throw new RuntimeException(
-            'Connexion à Aiven indisponible.'
-        );
-    }
-
-    // =================================================
-    // RECHERCHE DU TITULAIRE
-    // =================================================
-
     $sql = "
         SELECT
             u.id,
-            u.username,
             u.type_profil,
 
             CONCAT_WS(
@@ -138,7 +68,13 @@ try {
                 COALESCE(pc.nom, pm.nom),
                 COALESCE(pc.postnom, pm.postnom),
                 COALESCE(pc.prenom, pm.prenom)
-            ) AS nom_complet
+            ) AS nom_complet,
+
+            pp.photo_url,
+            pp.telephone,
+            pp.adresse_physique,
+            pp.emplacement,
+            pp.family_members
 
         FROM users u
 
@@ -147,6 +83,9 @@ try {
 
         LEFT JOIN profiles_militaire pm
             ON pm.user_id = u.id
+
+        LEFT JOIN public_profiles pp
+            ON pp.user_id = u.id
 
         WHERE {$where}
 
@@ -168,33 +107,18 @@ try {
         ]);
     }
 
-    // =================================================
-    // STRUCTURE DE LA FICHE PUBLIQUE
-    // =================================================
+    $family = json_decode(
+        $person['family_members'] ?? '[]',
+        true
+    );
 
-    $identity = [
-        'id' => $person['id'],
-        'username' => $person['username'],
-        'type_profil' => strtoupper(
-            $person['type_profil']
-        ),
-        'nom_complet' => trim(
-            $person['nom_complet']
-        ),
-        'photo_url' => null,
-        'telephone' => null,
-        'adresse_physique' => null,
-        'emplacement' => null,
-        'family_members' => []
-    ];
-
-    // =================================================
-    // ENVOI DU RÉSULTAT
-    // =================================================
+    $person['family_members'] = is_array($family)
+        ? array_slice($family, 0, 2)
+        : [];
 
     respond(200, [
         'status' => 'success',
-        'person' => $identity
+        'person' => $person
     ]);
 
 } catch (Throwable $e) {
@@ -205,7 +129,6 @@ try {
 
     respond(500, [
         'status' => 'error',
-        'message' =>
-            'Impossible de récupérer la fiche.'
+        'message' => 'Impossible de récupérer la fiche.'
     ]);
 }
